@@ -211,6 +211,16 @@ test('central config uses administrator env and full SHA pin', () => {
   assert.doesNotMatch(pipeline, /CENTRAL_CICD_CONFIG_REF.*main/);
 });
 
+test('admin env validation avoids Jenkins sandbox getAt indexing', () => {
+  const pipeline = readFileSync(pipelinePath, 'utf8');
+  assert.match(pipeline, /private String adminEnvValue\(String name\)/);
+  assert.match(pipeline, /env\.CENTRAL_CICD_CONFIG_REPOSITORY/);
+  assert.match(pipeline, /env\.CENTRAL_CICD_CONFIG_REF/);
+  assert.doesNotMatch(pipeline, /env\[[^\]]+\]/);
+  assert.doesNotMatch(pipeline, /matcher\[[^\]]+\]/);
+  assert.doesNotMatch(pipeline, /profile\[[^\]]+\]/);
+});
+
 test('checkout credential ids are administrator-managed and not webhook controlled', () => {
   const pipeline = readFileSync(pipelinePath, 'utf8');
   const jobTemplate = readFileSync(jobTemplatePath, 'utf8');

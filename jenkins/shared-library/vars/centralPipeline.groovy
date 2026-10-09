@@ -182,7 +182,8 @@ private Map validateBuildProfile(String expectedId, Object rawProfile) {
   if (profile.version != 1) error("Unsupported build profile version for ${expectedId}: ${profile.version}")
   validateRuntimeProfileCombination(expectedId, profile.runtime as String)
   ['install', 'test', 'build'].each { key ->
-    if (!(profile[key] instanceof String) || !(profile[key] as String).trim()) {
+    def command = profile.get(key)
+    if (!(command instanceof String) || !(command as String).trim()) {
       error("Malformed build profile ${expectedId}: ${key} must be a non-empty string")
     }
   }
@@ -202,8 +203,9 @@ private void validateRuntimeProfileCombination(String profileId, String runtime)
   if (!expectedRuntimeByProfile.containsKey(profileId)) {
     error("Unsupported build profile: ${profileId}")
   }
-  if (expectedRuntimeByProfile[profileId] != runtime) {
-    error("Unsupported runtime/profile combination: ${profileId} requires ${expectedRuntimeByProfile[profileId]}, got ${runtime}")
+  def expectedRuntime = expectedRuntimeByProfile.get(profileId)
+  if (expectedRuntime != runtime) {
+    error("Unsupported runtime/profile combination: ${profileId} requires ${expectedRuntime}, got ${runtime}")
   }
 }
 
@@ -220,7 +222,7 @@ private void enforceLockfilePolicy(Map profile) {
     'node-npm-v1': 'package-lock.json',
     'node-pnpm-v1': 'pnpm-lock.yaml'
   ]
-  def lockfile = lockfileByProfile[profile.id as String]
+  def lockfile = lockfileByProfile.get(profile.id as String)
   if (!lockfile) {
     error("No lockfile policy is defined for ${profile.id}")
   }
@@ -323,7 +325,7 @@ private Map gitRemoteConfig(String url, String credentialsId) {
 }
 
 private String optionalCredentialId(String name) {
-  def value = env[name]
+  def value = adminEnvValue(name)
   if (value == null || !value.trim()) return ''
   requireMatch(name, value.trim(), /^[A-Za-z0-9_.@:-]{1,128}$/)
   return value.trim()
@@ -334,15 +336,31 @@ private String githubOwner(String url) {
   if (!matcher.matches()) {
     error("Invalid repository URL: ${url}")
   }
-  return matcher[0][1]
+  return matcher.group(1)
 }
 
 private String requireAdminEnv(String name) {
-  def value = env[name]
+  def value = adminEnvValue(name)
   if (!(value instanceof String) || !value.trim()) {
     error("Missing required Jenkins administrator configuration ${name}. Configure it as a protected Jenkins global or folder environment variable, not as a job parameter.")
   }
   return value.trim()
+}
+
+private String adminEnvValue(String name) {
+  if (name == 'CENTRAL_CICD_CONFIG_REPOSITORY') {
+    return env.CENTRAL_CICD_CONFIG_REPOSITORY
+  }
+  if (name == 'CENTRAL_CICD_CONFIG_REF') {
+    return env.CENTRAL_CICD_CONFIG_REF
+  }
+  if (name == 'CENTRAL_CICD_CONFIG_CREDENTIALS_ID') {
+    return env.CENTRAL_CICD_CONFIG_CREDENTIALS_ID
+  }
+  if (name == 'CENTRAL_CICD_APP_GITHUB_CREDENTIALS_ID_YESHWANTH1127') {
+    return env.CENTRAL_CICD_APP_GITHUB_CREDENTIALS_ID_YESHWANTH1127
+  }
+  error("Unsupported administrator environment variable: ${name}")
 }
 
 private String shellQuote(String value) {
