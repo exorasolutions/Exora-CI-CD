@@ -1,0 +1,8 @@
+id: node-pnpm-v1
+version: 1
+runtime: node
+lockfileRequired: true
+install: corepack enable && pnpm install --frozen-lockfile
+test: pnpm test
+build: pnpm build
+artifactPath: dist

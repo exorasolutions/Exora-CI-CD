@@ -1,0 +1,9 @@
+{
+  "name": "central-cicd",
+  "private": true,
+  "workspaces": ["controller", "deploy-worker"],
+  "scripts": {
+    "build": "npm run build --workspace controller && npm run build --workspace deploy-worker",
+    "test": "npm test --workspace controller"
+  }
+}

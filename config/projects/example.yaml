@@ -1,0 +1,22 @@
+schemaVersion: 1
+project:
+  id: example-project
+  enabled: false
+  github:
+    owner: YOUR_OWNER
+    repo: YOUR_REPO
+    # repositoryId: 123456789
+    branch: main
+  build:
+    profile: node-npm-v1
+    agentLabel: linux-build
+    testsRequired: true
+    timeoutMinutes: 30
+  deployment:
+    mode: manual
+    adapter: pm2
+    targetId: example-production
+    environment: production
+  healthCheck:
+    type: http
+    url: https://YOUR_DOMAIN/health

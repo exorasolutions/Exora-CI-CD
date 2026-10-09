@@ -1,0 +1,14 @@
+id: example-static-production
+projectId: example
+environment: production
+adapter: static
+rootPath: /var/www/example
+releaseRoot: /var/www/example/releases
+currentPath: /var/www/example/current
+health:
+  type: http
+  url: https://example.invalid/health
+  expectedStatus: 200
+  timeoutMs: 10000
+runtime: {}
+enabled: false

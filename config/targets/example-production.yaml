@@ -1,0 +1,17 @@
+id: example-production
+projectId: example-project
+environment: production
+adapter: static
+target:
+  root: /var/www/example
+release:
+  strategy: atomic-symlink
+  keep: 5
+health:
+  url: https://example.invalid/health
+  expectedStatus: 200
+  timeoutSeconds: 10
+  attempts: 5
+rollback:
+  enabled: true
+enabled: false

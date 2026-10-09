@@ -1,0 +1,8 @@
+id: node-npm-v1
+version: 1
+runtime: node
+lockfileRequired: true
+install: npm ci
+test: npm test
+build: npm run build
+artifactPath: dist

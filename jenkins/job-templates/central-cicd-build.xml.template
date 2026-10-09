@@ -1,0 +1,43 @@
+<?xml version='1.1' encoding='UTF-8'?>
+<flow-definition plugin="workflow-job">
+  <actions/>
+  <description>Generic centralized CI/CD job. Application repositories do not contain Jenkinsfiles.</description>
+  <keepDependencies>false</keepDependencies>
+  <properties>
+    <hudson.model.ParametersDefinitionProperty>
+      <parameterDefinitions>
+        <hudson.model.StringParameterDefinition><name>PROJECT_ID</name><trim>true</trim></hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition><name>REPOSITORY_URL</name><trim>true</trim></hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition><name>COMMIT_SHA</name><trim>true</trim></hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition><name>BUILD_PROFILE</name><defaultValue>node-npm-v1</defaultValue><trim>true</trim></hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition><name>AGENT_LABEL</name><defaultValue>linux-build</defaultValue><trim>true</trim></hudson.model.StringParameterDefinition>
+        <hudson.model.BooleanParameterDefinition><name>TESTS_REQUIRED</name><defaultValue>true</defaultValue></hudson.model.BooleanParameterDefinition>
+        <hudson.model.ChoiceParameterDefinition><name>DEPLOYMENT_MODE</name><choices class="java.util.Arrays$ArrayList"><a class="string-array"><string>manual</string><string>automatic</string></a></choices></hudson.model.ChoiceParameterDefinition>
+        <hudson.model.StringParameterDefinition><name>DEPLOYMENT_ADAPTER</name><trim>true</trim></hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition><name>TARGET_ID</name><trim>true</trim></hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition><name>ENVIRONMENT</name><defaultValue>production</defaultValue><trim>true</trim></hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition><name>DELIVERY_ID</name><trim>true</trim></hudson.model.StringParameterDefinition>
+      </parameterDefinitions>
+    </hudson.model.ParametersDefinitionProperty>
+  </properties>
+  <definition class="org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition" plugin="workflow-cps">
+    <script>@Library('central-cicd-lib') _
+centralPipeline(
+  projectId: params.PROJECT_ID,
+  repository: params.REPOSITORY_URL,
+  commitSha: params.COMMIT_SHA,
+  buildProfile: params.BUILD_PROFILE,
+  agentLabel: params.AGENT_LABEL,
+  deployAgentLabel: 'production-deploy',
+  testsRequired: params.TESTS_REQUIRED,
+  deploymentMode: params.DEPLOYMENT_MODE,
+  deploymentAdapter: params.DEPLOYMENT_ADAPTER,
+  targetId: params.TARGET_ID,
+  environment: params.ENVIRONMENT,
+  deliveryId: params.DELIVERY_ID
+)</script>
+    <sandbox>true</sandbox>
+  </definition>
+  <triggers/>
+  <disabled>false</disabled>
+</flow-definition>
