@@ -22,6 +22,7 @@ Use `/opt/central-cicd` for platform code and `/opt/cicd` for controlled artifac
 - [ ] Configure controller built-in executors to 0 when a separate agent is available. If forced to use the same VPS temporarily, use one executor maximum and enforce resource limits; do not run concurrent builds.
 - [ ] Store credentials in Jenkins Credentials, never in Git.
 - [ ] Configure the central shared library/job; application repositories must not contain Jenkinsfiles or GitHub Actions workflows.
+- [ ] Configure protected Jenkins administrator environment variables: `CENTRAL_CICD_CONFIG_REPOSITORY`, pinned full-SHA `CENTRAL_CICD_CONFIG_REF`, optional `CENTRAL_CICD_CONFIG_CREDENTIALS_ID`, optional `CENTRAL_CICD_APP_GITHUB_CREDENTIALS_ID_YESHWANTH1127`, and `CENTRAL_CICD_DEPLOYMENT_EXECUTION_ENABLED=false`.
 
 ## Stage 4 — Control API and database
 - [ ] Create a dedicated database and restricted DB user.

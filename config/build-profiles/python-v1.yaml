@@ -4,5 +4,5 @@ runtime: python
 lockfileRequired: false
 install: python3 -m pip install -r requirements.txt
 test: python3 -m pytest
-build: mkdir -p artifact && cp -a . artifact/source
+build: python3 .central-cicd/package-python-source.py
 artifactPath: artifact

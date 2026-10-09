@@ -12,7 +12,8 @@
 - Build/test/package run on a `linux-build` agent, not the controller.
 - Artifacts are checksummed, archived and stashed by Jenkins.
 - Basic manual approval is included.
-- Production handoff uses a separate `production-deploy` agent label.
+- Deployment execution is centrally feature-flagged off by default through Jenkins administrator configuration.
+- While disabled, deployment handoff does not request the `production-deploy` agent and does not contact the deploy worker.
 - Real deployment is still deliberately disabled in Phase 2.
 
 ## Why one generic Jenkins job?
