@@ -227,22 +227,58 @@ private void validateMonorepoProfile(String profileId, Map profile) {
   if (!(profile.packages instanceof List) || profile.packages.isEmpty()) {
     error("Malformed build profile ${profileId}: packages must be a non-empty list")
   }
+  def names = []
+  def targets = []
   profile.packages.each { pkg ->
     if (!(pkg instanceof Map)) error("Malformed build profile ${profileId}: package entry must be a mapping")
-    ['name', 'workingDir', 'lockfile', 'install', 'artifactPath', 'artifactTarget'].each { key ->
+    ['name', 'workingDir', 'lockfile', 'install', 'artifactTarget'].each { key ->
       if (!pkg.containsKey(key)) error("Malformed build profile ${profileId}: package missing ${key}")
     }
     requireMatch('package.name', pkg.name, /^[a-z0-9][a-z0-9-]{0,63}$/)
+    if (names.contains(pkg.name as String)) {
+      error("Duplicate monorepo package name: ${pkg.name}")
+    }
+    names.add(pkg.name as String)
     validateSafeRelativePath(pkg.workingDir as String, 'package.workingDir')
     validateSafeRelativePath(pkg.lockfile as String, 'package.lockfile')
-    validateSafeRelativePath(pkg.artifactPath as String, 'package.artifactPath')
     validateSafeRelativePath(pkg.artifactTarget as String, 'package.artifactTarget')
+    if (targets.contains(pkg.artifactTarget as String)) {
+      error("Duplicate monorepo artifact target: ${pkg.artifactTarget}")
+    }
+    targets.add(pkg.artifactTarget as String)
+    validateMonorepoArtifactSelection(pkg)
     validateApprovedMonorepoCommand(pkg.install as String, true)
     validateApprovedMonorepoCommand(pkg.get('test') as String, false)
     validateApprovedMonorepoCommand(pkg.get('build') as String, false)
     if (pkg.lockfile != 'package-lock.json') {
       error("Unsupported lockfile for ${pkg.name}: ${pkg.lockfile}")
     }
+  }
+}
+
+private void validateMonorepoArtifactSelection(Map pkg) {
+  def hasArtifactPath = pkg.containsKey('artifactPath')
+  def hasArtifactIncludes = pkg.containsKey('artifactIncludes')
+  if (hasArtifactPath == hasArtifactIncludes) {
+    error("Package ${pkg.name} must define exactly one of artifactPath or artifactIncludes")
+  }
+  if (hasArtifactPath) {
+    validateSafeRelativePath(pkg.artifactPath as String, 'package.artifactPath')
+    return
+  }
+  if (!(pkg.artifactIncludes instanceof List) || pkg.artifactIncludes.isEmpty()) {
+    error("Package ${pkg.name} artifactIncludes must be a non-empty list")
+  }
+  def includes = []
+  pkg.artifactIncludes.each { includePath ->
+    validateSafeRelativePath(includePath as String, 'package.artifactIncludes')
+    if (includePath == '.') {
+      error("Package ${pkg.name} artifactIncludes may not include the entire package directory")
+    }
+    if (includes.contains(includePath as String)) {
+      error("Package ${pkg.name} has duplicate artifact include: ${includePath}")
+    }
+    includes.add(includePath as String)
   }
 }
 
@@ -266,6 +302,10 @@ private void prepareProfileHelpers(Map profile) {
 private void enforceLockfilePolicy(Map profile) {
   if (profile.monorepo == true) {
     profile.packages.each { pkg ->
+      def packageJsonPath = "${pkg.workingDir}/package.json"
+      if (!fileExists(packageJsonPath)) {
+        error("Required package manifest is missing for ${pkg.name}: ${packageJsonPath}")
+      }
       def lockfilePath = "${pkg.workingDir}/${pkg.lockfile}"
       if (!fileExists(lockfilePath)) {
         error("Required lockfile is missing for ${pkg.name}: ${lockfilePath}")
@@ -312,11 +352,20 @@ private void runBuild(Map profile) {
 }
 
 private void runMonorepoCommand(Map profile, String key) {
+  def ran = false
   profile.packages.each { pkg ->
     def command = pkg.get(key)
-    if (!(command instanceof String) || !command.trim()) return
+    if (!(command instanceof String) || !command.trim()) {
+      echo "Skipping ${key} for ${pkg.name}: no ${key} command configured in central profile."
+      return
+    }
+    ran = true
     def quotedDir = shellQuote(pkg.workingDir as String)
+    echo "Running ${key} for ${pkg.name} in ${pkg.workingDir}: ${command}"
     sh "cd ${quotedDir} && ${command}"
+  }
+  if (!ran) {
+    echo "No monorepo ${key} commands configured in central profile."
   }
 }
 
@@ -330,10 +379,19 @@ private void prepareArtifact(Map profile) {
 }
 
 private void copyMonorepoArtifact(Map pkg, String root) {
-  def source = pkg.artifactPath == '.'
-    ? (pkg.workingDir as String)
-    : "${pkg.workingDir}/${pkg.artifactPath}"
   def target = "${root}/${pkg.artifactTarget}"
+  sh "mkdir -p ${shellQuote(target)}"
+  if (pkg.containsKey('artifactIncludes')) {
+    pkg.artifactIncludes.each { includePath ->
+      copyMonorepoArtifactPath("${pkg.workingDir}/${includePath}", target)
+    }
+    return
+  }
+  def source = "${pkg.workingDir}/${pkg.artifactPath}"
+  copyMonorepoArtifactPath(source, target)
+}
+
+private void copyMonorepoArtifactPath(String source, String target) {
   sh """
     set -eu
     test -e ${shellQuote(source)}
@@ -342,7 +400,6 @@ private void copyMonorepoArtifact(Map pkg, String root) {
       echo 'Configured artifact contains symlinks; refusing to package.' >&2
       exit 1
     fi
-    mkdir -p ${shellQuote(target)}
     tar --sort=name --owner=0 --group=0 --numeric-owner --mtime='UTC 1970-01-01' \\
       --exclude='.git' --exclude='.git/**' \\
       --exclude='.svn' --exclude='.hg' \\
@@ -354,7 +411,7 @@ private void copyMonorepoArtifact(Map pkg, String root) {
       --exclude='*/node_modules' --exclude='*/node_modules/**' \\
       --exclude='npm-cache' --exclude='npm-cache/**' \\
       --exclude='*/npm-cache' --exclude='*/npm-cache/**' \\
-      -C ${shellQuote(source)} -cf - . | tar -C ${shellQuote(target)} -xf -
+      -C ${shellQuote(parentDir(source))} -cf - ${shellQuote(baseName(source))} | tar -C ${shellQuote(target)} -xf -
   """
 }
 
@@ -388,6 +445,9 @@ private void packageArtifact(String artifactPath, String artifactName) {
 
 private void validateArtifactPath(String artifactPath) {
   validateSafeRelativePath(artifactPath, 'artifactPath')
+  if (artifactPath == '.') {
+    error('artifactPath may not be the repository root')
+  }
 }
 
 private void validateSafeRelativePath(String path, String fieldName) {
@@ -396,6 +456,16 @@ private void validateSafeRelativePath(String path, String fieldName) {
       path == '..' || path.contains('../') || path.contains('/..')) {
     error("Unsafe ${fieldName}: ${path}")
   }
+}
+
+private String parentDir(String path) {
+  def index = path.lastIndexOf('/')
+  return index >= 0 ? path.substring(0, index) : '.'
+}
+
+private String baseName(String path) {
+  def index = path.lastIndexOf('/')
+  return index >= 0 ? path.substring(index + 1) : path
 }
 
 private void validateArtifactName(String artifactName) {

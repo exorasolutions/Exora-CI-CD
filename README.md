@@ -60,11 +60,16 @@ packages:
     lockfile: package-lock.json
     install: npm ci
     test: npm test
-    artifactPath: .
+    artifactIncludes:
+      - package.json
+      - package-lock.json
+      - server.js
+      - routes
+      - services
     artifactTarget: api
 ```
 
-Every `workingDir`, `lockfile`, `artifactPath`, and `artifactTarget` must be a safe relative path inside the checked-out repository. The shared library rejects absolute paths, traversal, backslashes, shell metacharacters, unsupported lockfiles, and unapproved commands. Supported monorepo commands are currently only `npm ci`, `npm test`, and `npm run build`; add new commands only through central review and tests.
+Every `workingDir`, `lockfile`, `artifactPath`, `artifactIncludes`, and `artifactTarget` must be a safe relative path inside the checked-out repository. Each package must define exactly one artifact source: `artifactPath` for a generated output directory such as `dist`, or `artifactIncludes` for an explicit allowlist of backend files and directories. The shared library rejects absolute paths, traversal, backslashes, shell metacharacters, duplicate package names, duplicate artifact targets, unsupported lockfiles, unapproved commands, and artifact include lists that package an entire backend directory. Supported monorepo commands are currently only `npm ci`, `npm test`, and `npm run build`; add new commands only through central review and tests.
 
 The Python profile intentionally creates `artifact/source` from repository source by running the centrally maintained shared-library helper `scripts/package-python-source.py`. It removes any previous `artifact` directory first and ignores generated directories such as `artifact`, `.git`, caches, virtual environments, `dist`, `build`, `.env*` files, and common secret key files so the artifact does not recursively copy itself or include common secrets.
 

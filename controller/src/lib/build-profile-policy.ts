@@ -23,7 +23,8 @@ export type MonorepoPackage = {
   install: string;
   test?: string;
   build?: string;
-  artifactPath: string;
+  artifactPath?: string;
+  artifactIncludes?: string[];
   artifactTarget: string;
 };
 
@@ -60,7 +61,7 @@ export function validateBuildProfile(expectedId: string, raw: unknown): BuildPro
     throw new Error(`Unsupported runtime/profile combination: ${expectedId} requires ${runtimeByProfile[expectedId]}, got ${String(profile.runtime)}`);
   }
   if (typeof profile.lockfileRequired !== 'boolean') throw new Error(`Malformed build profile ${expectedId}: lockfileRequired must be boolean`);
-  validateArtifactPath(String(profile.artifactPath));
+  validateProfileArtifactPath(String(profile.artifactPath));
   if (profile.monorepo === true) {
     validateMonorepoProfile(expectedId, profile);
     return profile as BuildProfile;
@@ -103,6 +104,11 @@ export function validateArtifactPath(value: string) {
   }
 }
 
+export function validateProfileArtifactPath(value: string) {
+  validateArtifactPath(value);
+  if (value === '.') throw new Error('artifact path may not be repository root');
+}
+
 export function validateArtifactName(value: string) {
   if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,120}\.tar\.gz$/.test(value)) throw new Error('invalid artifact name');
 }
@@ -121,21 +127,50 @@ function isApprovedProfileId(value: string): value is ApprovedProfileId {
 function validateMonorepoProfile(expectedId: string, profile: Record<string, unknown>) {
   if (expectedId !== 'node-npm-exora-monorepo-v1') throw new Error(`Monorepo profile is not approved for ${expectedId}`);
   if (!Array.isArray(profile.packages) || profile.packages.length === 0) throw new Error(`Malformed build profile ${expectedId}: packages must be a non-empty list`);
+  const names = new Set<string>();
+  const targets = new Set<string>();
   for (const entry of profile.packages) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw new Error(`Malformed build profile ${expectedId}: package entry must be a mapping`);
     const pkg = entry as Record<string, unknown>;
-    for (const key of ['name', 'workingDir', 'lockfile', 'install', 'artifactPath', 'artifactTarget']) {
+    for (const key of ['name', 'workingDir', 'lockfile', 'install', 'artifactTarget']) {
       if (!(key in pkg)) throw new Error(`Malformed build profile ${expectedId}: package missing ${key}`);
     }
-    if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(String(pkg.name))) throw new Error('invalid package name');
+    const packageName = String(pkg.name);
+    const artifactTarget = String(pkg.artifactTarget);
+    if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(packageName)) throw new Error('invalid package name');
+    if (names.has(packageName)) throw new Error(`Duplicate monorepo package name: ${packageName}`);
+    names.add(packageName);
     validateArtifactPath(String(pkg.workingDir));
     validateArtifactPath(String(pkg.lockfile));
-    validateArtifactPath(String(pkg.artifactPath));
-    validateArtifactPath(String(pkg.artifactTarget));
+    validateArtifactPath(artifactTarget);
+    if (targets.has(artifactTarget)) throw new Error(`Duplicate monorepo artifact target: ${artifactTarget}`);
+    targets.add(artifactTarget);
+    validateMonorepoArtifactSelection(packageName, pkg);
     validateApprovedMonorepoCommand(String(pkg.install), true);
     validateApprovedMonorepoCommand(pkg.test === undefined ? undefined : String(pkg.test), false);
     validateApprovedMonorepoCommand(pkg.build === undefined ? undefined : String(pkg.build), false);
     if (pkg.lockfile !== 'package-lock.json') throw new Error(`Unsupported lockfile for ${String(pkg.name)}: ${String(pkg.lockfile)}`);
+  }
+}
+
+function validateMonorepoArtifactSelection(packageName: string, pkg: Record<string, unknown>) {
+  const hasArtifactPath = 'artifactPath' in pkg;
+  const hasArtifactIncludes = 'artifactIncludes' in pkg;
+  if (hasArtifactPath === hasArtifactIncludes) throw new Error(`Package ${packageName} must define exactly one of artifactPath or artifactIncludes`);
+  if (hasArtifactPath) {
+    validateArtifactPath(String(pkg.artifactPath));
+    return;
+  }
+  if (!Array.isArray(pkg.artifactIncludes) || pkg.artifactIncludes.length === 0) {
+    throw new Error(`Package ${packageName} artifactIncludes must be a non-empty list`);
+  }
+  const includes = new Set<string>();
+  for (const includePath of pkg.artifactIncludes) {
+    const value = String(includePath);
+    validateArtifactPath(value);
+    if (value === '.') throw new Error(`Package ${packageName} artifactIncludes may not include the entire package directory`);
+    if (includes.has(value)) throw new Error(`Package ${packageName} has duplicate artifact include: ${value}`);
+    includes.add(value);
   }
 }
 

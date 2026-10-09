@@ -178,9 +178,38 @@ test('validates exora monorepo profile package commands and artifact paths', () 
   assert.equal(profile.artifactPath, '.central-cicd/release');
   assert.deepEqual(profile.packages?.map((pkg) => [pkg.name, pkg.workingDir, pkg.install, pkg.test ?? '', pkg.build ?? '', pkg.artifactPath, pkg.artifactTarget]), [
     ['marketing-client', 'exora-mern/client', 'npm ci', '', 'npm run build', 'dist', 'marketing-client'],
-    ['main-server', 'exora-mern/server', 'npm ci', 'npm test', '', '.', 'main-server'],
-    ['crm-backend', 'exora-mern/exora-crm/backend', 'npm ci', '', '', '.', 'crm-backend'],
+    ['main-server', 'exora-mern/server', 'npm ci', 'npm test', '', undefined, 'main-server'],
+    ['crm-backend', 'exora-mern/exora-crm/backend', 'npm ci', '', '', undefined, 'crm-backend'],
     ['crm-frontend', 'exora-mern/exora-crm/frontend', 'npm ci', '', 'npm run build', 'dist', 'crm-frontend']
+  ]);
+  const mainServer = profile.packages?.find((pkg) => pkg.name === 'main-server');
+  const crmBackend = profile.packages?.find((pkg) => pkg.name === 'crm-backend');
+  assert.deepEqual(mainServer?.artifactIncludes, [
+    'package.json',
+    'package-lock.json',
+    'server.js',
+    'config',
+    'controllers',
+    'data',
+    'middleware',
+    'migrations',
+    'models',
+    'public',
+    'registry',
+    'routes',
+    'scripts',
+    'services'
+  ]);
+  assert.deepEqual(crmBackend?.artifactIncludes, [
+    'package.json',
+    'package-lock.json',
+    'server.js',
+    'crm.json',
+    'config',
+    'jobs',
+    'middleware',
+    'routes',
+    'services'
   ]);
 });
 
@@ -206,6 +235,28 @@ test('rejects unsafe monorepo working directories and unapproved commands', () =
     ...base,
     packages: [{ ...(base.packages[0]), workingDir: 'safe/path', install: 'npm install && curl evil' }]
   }), /Unsupported monorepo command/);
+  assert.throws(() => validateBuildProfile('node-npm-exora-monorepo-v1', {
+    ...base,
+    packages: [
+      { ...(base.packages[0]), workingDir: 'safe/path', artifactPath: 'dist' },
+      { ...(base.packages[0]), workingDir: 'safe/other', artifactPath: 'dist' }
+    ]
+  }), /Duplicate monorepo package name/);
+  assert.throws(() => validateBuildProfile('node-npm-exora-monorepo-v1', {
+    ...base,
+    packages: [{ ...(base.packages[0]), workingDir: 'safe/path', artifactPath: 'dist', artifactIncludes: ['server.js'] }]
+  }), /exactly one of artifactPath or artifactIncludes/);
+  assert.throws(() => validateBuildProfile('node-npm-exora-monorepo-v1', {
+    ...base,
+    packages: [{
+      name: 'bad-package',
+      workingDir: 'safe/path',
+      lockfile: 'package-lock.json',
+      install: 'npm ci',
+      artifactTarget: 'bad-package',
+      artifactIncludes: ['.']
+    }]
+  }), /may not include the entire package directory/);
 });
 
 test('rejects unsupported runtime/profile combinations', () => {

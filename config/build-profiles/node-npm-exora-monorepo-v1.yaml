@@ -17,14 +17,37 @@ packages:
     lockfile: package-lock.json
     install: npm ci
     test: npm test
-    artifactPath: .
     artifactTarget: main-server
+    artifactIncludes:
+      - package.json
+      - package-lock.json
+      - server.js
+      - config
+      - controllers
+      - data
+      - middleware
+      - migrations
+      - models
+      - public
+      - registry
+      - routes
+      - scripts
+      - services
   - name: crm-backend
     workingDir: exora-mern/exora-crm/backend
     lockfile: package-lock.json
     install: npm ci
-    artifactPath: .
     artifactTarget: crm-backend
+    artifactIncludes:
+      - package.json
+      - package-lock.json
+      - server.js
+      - crm.json
+      - config
+      - jobs
+      - middleware
+      - routes
+      - services
   - name: crm-frontend
     workingDir: exora-mern/exora-crm/frontend
     lockfile: package-lock.json
