@@ -1,6 +1,6 @@
 import YAML from 'yaml';
 
-export const approvedProfileIds = ['node-npm-v1', 'node-pnpm-v1', 'python-v1'] as const;
+export const approvedProfileIds = ['node-npm-v1', 'node-pnpm-v1', 'python-v1', 'node-npm-exora-monorepo-v1'] as const;
 export type ApprovedProfileId = typeof approvedProfileIds[number];
 
 export type BuildProfile = {
@@ -8,16 +8,30 @@ export type BuildProfile = {
   version: 1;
   runtime: 'node' | 'python';
   lockfileRequired: boolean;
-  install: string;
-  test: string;
-  build: string;
+  monorepo?: boolean;
+  install?: string;
+  test?: string;
+  build?: string;
   artifactPath: string;
+  packages?: MonorepoPackage[];
+};
+
+export type MonorepoPackage = {
+  name: string;
+  workingDir: string;
+  lockfile: string;
+  install: string;
+  test?: string;
+  build?: string;
+  artifactPath: string;
+  artifactTarget: string;
 };
 
 const runtimeByProfile: Record<ApprovedProfileId, BuildProfile['runtime']> = {
   'node-npm-v1': 'node',
   'node-pnpm-v1': 'node',
-  'python-v1': 'python'
+  'python-v1': 'python',
+  'node-npm-exora-monorepo-v1': 'node'
 };
 
 const lockfileByProfile: Partial<Record<ApprovedProfileId, string>> = {
@@ -34,7 +48,10 @@ export function validateBuildProfile(expectedId: string, raw: unknown): BuildPro
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(`Malformed build profile ${expectedId}: expected YAML mapping`);
 
   const profile = raw as Record<string, unknown>;
-  for (const key of ['id', 'version', 'runtime', 'lockfileRequired', 'install', 'test', 'build', 'artifactPath']) {
+  const requiredKeys = profile.monorepo === true
+    ? ['id', 'version', 'runtime', 'lockfileRequired', 'monorepo', 'artifactPath', 'packages']
+    : ['id', 'version', 'runtime', 'lockfileRequired', 'install', 'test', 'build', 'artifactPath'];
+  for (const key of requiredKeys) {
     if (!(key in profile)) throw new Error(`Malformed build profile ${expectedId}: missing ${key}`);
   }
   if (profile.id !== expectedId) throw new Error(`Build profile id mismatch: expected ${expectedId}, got ${String(profile.id)}`);
@@ -43,20 +60,30 @@ export function validateBuildProfile(expectedId: string, raw: unknown): BuildPro
     throw new Error(`Unsupported runtime/profile combination: ${expectedId} requires ${runtimeByProfile[expectedId]}, got ${String(profile.runtime)}`);
   }
   if (typeof profile.lockfileRequired !== 'boolean') throw new Error(`Malformed build profile ${expectedId}: lockfileRequired must be boolean`);
+  validateArtifactPath(String(profile.artifactPath));
+  if (profile.monorepo === true) {
+    validateMonorepoProfile(expectedId, profile);
+    return profile as BuildProfile;
+  }
   for (const key of ['install', 'test', 'build']) {
     if (typeof profile[key] !== 'string' || !profile[key].trim()) {
       throw new Error(`Malformed build profile ${expectedId}: ${key} must be a non-empty string`);
     }
   }
-  validateArtifactPath(String(profile.artifactPath));
   return profile as BuildProfile;
 }
 
 export function lockfileForProfile(profile: BuildProfile): string | null {
+  if (profile.monorepo) return null;
   if (!profile.lockfileRequired) return null;
   const lockfile = lockfileByProfile[profile.id];
   if (!lockfile) throw new Error(`No lockfile policy is defined for ${profile.id}`);
   return lockfile;
+}
+
+export function lockfilesForMonorepoProfile(profile: BuildProfile): string[] {
+  if (!profile.monorepo) return [];
+  return (profile.packages ?? []).map((pkg) => `${pkg.workingDir}/${pkg.lockfile}`);
 }
 
 export function validateCommitSha(value: string) {
@@ -71,7 +98,7 @@ export function validateRepositoryUrl(value: string) {
 
 export function validateArtifactPath(value: string) {
   if (!/^[A-Za-z0-9._/-]{1,160}$/.test(value)) throw new Error('invalid artifact path');
-  if (value.startsWith('/') || value.includes('\\') || value === '.' || value === '..' || value.includes('../') || value.includes('/..')) {
+  if (value.startsWith('/') || value.includes('\\') || value === '..' || value.includes('../') || value.includes('/..')) {
     throw new Error('unsafe artifact path');
   }
 }
@@ -89,4 +116,33 @@ export function deploymentExecutionEnabledFromAdminEnv(value: string | undefined
 
 function isApprovedProfileId(value: string): value is ApprovedProfileId {
   return (approvedProfileIds as readonly string[]).includes(value);
+}
+
+function validateMonorepoProfile(expectedId: string, profile: Record<string, unknown>) {
+  if (expectedId !== 'node-npm-exora-monorepo-v1') throw new Error(`Monorepo profile is not approved for ${expectedId}`);
+  if (!Array.isArray(profile.packages) || profile.packages.length === 0) throw new Error(`Malformed build profile ${expectedId}: packages must be a non-empty list`);
+  for (const entry of profile.packages) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw new Error(`Malformed build profile ${expectedId}: package entry must be a mapping`);
+    const pkg = entry as Record<string, unknown>;
+    for (const key of ['name', 'workingDir', 'lockfile', 'install', 'artifactPath', 'artifactTarget']) {
+      if (!(key in pkg)) throw new Error(`Malformed build profile ${expectedId}: package missing ${key}`);
+    }
+    if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(String(pkg.name))) throw new Error('invalid package name');
+    validateArtifactPath(String(pkg.workingDir));
+    validateArtifactPath(String(pkg.lockfile));
+    validateArtifactPath(String(pkg.artifactPath));
+    validateArtifactPath(String(pkg.artifactTarget));
+    validateApprovedMonorepoCommand(String(pkg.install), true);
+    validateApprovedMonorepoCommand(pkg.test === undefined ? undefined : String(pkg.test), false);
+    validateApprovedMonorepoCommand(pkg.build === undefined ? undefined : String(pkg.build), false);
+    if (pkg.lockfile !== 'package-lock.json') throw new Error(`Unsupported lockfile for ${String(pkg.name)}: ${String(pkg.lockfile)}`);
+  }
+}
+
+function validateApprovedMonorepoCommand(command: string | undefined, required: boolean) {
+  if (!command?.trim()) {
+    if (required) throw new Error('required monorepo command is missing');
+    return;
+  }
+  if (!['npm ci', 'npm test', 'npm run build'].includes(command)) throw new Error(`Unsupported monorepo command: ${command}`);
 }

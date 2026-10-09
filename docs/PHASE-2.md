@@ -10,6 +10,7 @@
 - Jenkins receives exact commit SHA and central policy parameters.
 - The shared pipeline checks out and verifies the exact SHA.
 - Build/test/package run on a `linux-build` agent, not the controller.
+- Monorepo builds can be centrally approved through explicit profile YAML with safe relative package working directories and per-package lockfile checks.
 - Artifacts are checksummed, archived and stashed by Jenkins.
 - Basic manual approval is included.
 - Deployment execution is centrally feature-flagged off by default through Jenkins administrator configuration.

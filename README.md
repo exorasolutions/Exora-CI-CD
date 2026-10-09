@@ -36,7 +36,35 @@ If either value is missing, malformed, uses a mutable branch such as `main`, or 
 
 Create Jenkins credentials explicitly when private repository access is needed; GitHub collaborator access alone does not create credentials for Jenkins. Use a GitHub fine-grained personal access token or deploy key stored in Jenkins Credentials, then put only the Jenkins credential ID in the protected administrator environment variable. Never embed tokens in repository URLs, YAML, shell commands, or logs. Webhook payloads and job parameters cannot choose credential IDs.
 
-To add a new profile safely, add one YAML file under `config/build-profiles/`, validate required fields (`id`, `version`, `runtime`, `lockfileRequired`, `install`, `test`, `build`, `artifactPath`), update the shared-library allowlist and tests, then pin Jenkins to a reviewed central commit SHA. Do not load build commands from webhook payloads, job parameters, or application repositories. Existing lockfile policy is `package-lock.json` for `node-npm-v1`, `pnpm-lock.yaml` for `node-pnpm-v1`, and no required lockfile for `python-v1`.
+To add a new profile safely, add one YAML file under `config/build-profiles/`, validate required fields, update the shared-library allowlist and tests, then pin Jenkins to a reviewed central commit SHA. Do not load build commands from webhook payloads, job parameters, or application repositories. Existing single-package lockfile policy is `package-lock.json` for `node-npm-v1`, `pnpm-lock.yaml` for `node-pnpm-v1`, and no required lockfile for `python-v1`.
+
+Monorepo applications are registered centrally with an explicit approved profile. Example shape:
+
+```yaml
+id: node-npm-example-monorepo-v1
+version: 1
+runtime: node
+lockfileRequired: true
+monorepo: true
+artifactPath: .central-cicd/release
+packages:
+  - name: frontend
+    workingDir: path/to/frontend
+    lockfile: package-lock.json
+    install: npm ci
+    build: npm run build
+    artifactPath: dist
+    artifactTarget: frontend
+  - name: api
+    workingDir: path/to/api
+    lockfile: package-lock.json
+    install: npm ci
+    test: npm test
+    artifactPath: .
+    artifactTarget: api
+```
+
+Every `workingDir`, `lockfile`, `artifactPath`, and `artifactTarget` must be a safe relative path inside the checked-out repository. The shared library rejects absolute paths, traversal, backslashes, shell metacharacters, unsupported lockfiles, and unapproved commands. Supported monorepo commands are currently only `npm ci`, `npm test`, and `npm run build`; add new commands only through central review and tests.
 
 The Python profile intentionally creates `artifact/source` from repository source by running the centrally maintained shared-library helper `scripts/package-python-source.py`. It removes any previous `artifact` directory first and ignores generated directories such as `artifact`, `.git`, caches, virtual environments, `dist`, `build`, `.env*` files, and common secret key files so the artifact does not recursively copy itself or include common secrets.
 

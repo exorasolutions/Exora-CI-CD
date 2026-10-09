@@ -11,6 +11,7 @@ import {
   approvedProfileIds,
   deploymentExecutionEnabledFromAdminEnv,
   lockfileForProfile,
+  lockfilesForMonorepoProfile,
   parseBuildProfileYaml,
   validateArtifactName,
   validateArtifactPath,
@@ -37,10 +38,14 @@ test('loads and validates each centrally approved build profile', () => {
   for (const id of approvedProfileIds) {
     const profile = parseBuildProfileYaml(id, readFileSync(join(profileDir, `${id}.yaml`), 'utf8'));
     assert.equal(profile.id, id);
-    assert.ok(profile.install);
-    assert.ok(profile.test);
-    assert.ok(profile.build);
     assert.ok(profile.artifactPath);
+    if (profile.monorepo) {
+      assert.ok(profile.packages?.length);
+    } else {
+      assert.ok(profile.install);
+      assert.ok(profile.test);
+      assert.ok(profile.build);
+    }
   }
 });
 
@@ -81,6 +86,7 @@ test('validates GitHub HTTPS repository URLs', () => {
 
 test('rejects unsafe artifact paths', () => {
   assert.doesNotThrow(() => validateArtifactPath('dist'));
+  assert.doesNotThrow(() => validateArtifactPath('.'));
   assert.doesNotThrow(() => validateArtifactPath('artifact/source'));
   assert.doesNotThrow(() => validateArtifactName('example-project-123.tar.gz'));
   assert.throws(() => validateArtifactPath('/dist'), /unsafe artifact path/);
@@ -153,9 +159,53 @@ test('enforces lockfile policy by approved profile', () => {
   const npm = parseBuildProfileYaml('node-npm-v1', readFileSync(join(profileDir, 'node-npm-v1.yaml'), 'utf8'));
   const pnpm = parseBuildProfileYaml('node-pnpm-v1', readFileSync(join(profileDir, 'node-pnpm-v1.yaml'), 'utf8'));
   const python = parseBuildProfileYaml('python-v1', readFileSync(join(profileDir, 'python-v1.yaml'), 'utf8'));
+  const exora = parseBuildProfileYaml('node-npm-exora-monorepo-v1', readFileSync(join(profileDir, 'node-npm-exora-monorepo-v1.yaml'), 'utf8'));
   assert.equal(lockfileForProfile(npm), 'package-lock.json');
   assert.equal(lockfileForProfile(pnpm), 'pnpm-lock.yaml');
   assert.equal(lockfileForProfile(python), null);
+  assert.deepEqual(lockfilesForMonorepoProfile(exora), [
+    'exora-mern/client/package-lock.json',
+    'exora-mern/server/package-lock.json',
+    'exora-mern/exora-crm/backend/package-lock.json',
+    'exora-mern/exora-crm/frontend/package-lock.json'
+  ]);
+});
+
+test('validates exora monorepo profile package commands and artifact paths', () => {
+  const profile = parseBuildProfileYaml('node-npm-exora-monorepo-v1', readFileSync(join(profileDir, 'node-npm-exora-monorepo-v1.yaml'), 'utf8'));
+  assert.equal(profile.monorepo, true);
+  assert.equal(profile.runtime, 'node');
+  assert.equal(profile.artifactPath, '.central-cicd/release');
+  assert.deepEqual(profile.packages?.map((pkg) => [pkg.name, pkg.workingDir, pkg.install, pkg.test ?? '', pkg.build ?? '', pkg.artifactPath, pkg.artifactTarget]), [
+    ['marketing-client', 'exora-mern/client', 'npm ci', '', 'npm run build', 'dist', 'marketing-client'],
+    ['main-server', 'exora-mern/server', 'npm ci', 'npm test', '', '.', 'main-server'],
+    ['crm-backend', 'exora-mern/exora-crm/backend', 'npm ci', '', '', '.', 'crm-backend'],
+    ['crm-frontend', 'exora-mern/exora-crm/frontend', 'npm ci', '', 'npm run build', 'dist', 'crm-frontend']
+  ]);
+});
+
+test('rejects unsafe monorepo working directories and unapproved commands', () => {
+  const base = {
+    id: 'node-npm-exora-monorepo-v1',
+    version: 1,
+    runtime: 'node',
+    lockfileRequired: true,
+    monorepo: true,
+    artifactPath: '.central-cicd/release',
+    packages: [{
+      name: 'bad-package',
+      workingDir: '../outside',
+      lockfile: 'package-lock.json',
+      install: 'npm ci',
+      artifactPath: 'dist',
+      artifactTarget: 'bad-package'
+    }]
+  };
+  assert.throws(() => validateBuildProfile('node-npm-exora-monorepo-v1', base), /unsafe artifact path/);
+  assert.throws(() => validateBuildProfile('node-npm-exora-monorepo-v1', {
+    ...base,
+    packages: [{ ...(base.packages[0]), workingDir: 'safe/path', install: 'npm install && curl evil' }]
+  }), /Unsupported monorepo command/);
 });
 
 test('rejects unsupported runtime/profile combinations', () => {

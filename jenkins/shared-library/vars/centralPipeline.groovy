@@ -23,7 +23,6 @@ def call(Map cfg = [:]) {
             steps {
               script {
                 profile = loadBuildProfile(cfg)
-                validateArtifactPath(profile.artifactPath as String)
               }
             }
           }
@@ -51,28 +50,33 @@ def call(Map cfg = [:]) {
             steps {
               script {
                 enforceLockfilePolicy(profile)
+                runInstall(profile)
               }
-              sh profile.install
             }
           }
 
           stage('Test') {
             when { expression { cfg.testsRequired != false } }
-            steps { sh profile.test }
+            steps {
+              script {
+                runTests(profile)
+              }
+            }
           }
 
           stage('Build') {
             steps {
               script {
                 prepareProfileHelpers(profile)
+                runBuild(profile)
               }
-              sh profile.build
             }
           }
 
           stage('Package artifact') {
             steps {
               script {
+                prepareArtifact(profile)
                 packageArtifact(profile.artifactPath as String, artifactName)
               }
               archiveArtifacts artifacts: "${artifactName},${artifactName}.sha256", fingerprint: true, onlyIfSuccessful: true
@@ -138,7 +142,7 @@ private void validatePipelineConfig(Map cfg) {
 
 private Map loadBuildProfile(Map cfg) {
   def id = cfg.buildProfile as String
-  def allowed = ['node-npm-v1', 'node-pnpm-v1', 'python-v1']
+  def allowed = ['node-npm-v1', 'node-pnpm-v1', 'python-v1', 'node-npm-exora-monorepo-v1']
   if (!allowed.contains(id)) {
     error("Unknown centrally-approved build profile: ${id}")
   }
@@ -174,23 +178,29 @@ private Map loadBuildProfile(Map cfg) {
 private Map validateBuildProfile(String expectedId, Object rawProfile) {
   if (!(rawProfile instanceof Map)) error("Malformed build profile ${expectedId}: expected YAML mapping")
   def profile = rawProfile as Map
-  def required = ['id', 'version', 'runtime', 'lockfileRequired', 'install', 'test', 'build', 'artifactPath']
+  def required = profile.monorepo == true
+    ? ['id', 'version', 'runtime', 'lockfileRequired', 'monorepo', 'artifactPath', 'packages']
+    : ['id', 'version', 'runtime', 'lockfileRequired', 'install', 'test', 'build', 'artifactPath']
   required.each { key ->
     if (!profile.containsKey(key)) error("Malformed build profile ${expectedId}: missing ${key}")
   }
   if (profile.id != expectedId) error("Build profile id mismatch: expected ${expectedId}, got ${profile.id}")
   if (profile.version != 1) error("Unsupported build profile version for ${expectedId}: ${profile.version}")
   validateRuntimeProfileCombination(expectedId, profile.runtime as String)
+  if (!(profile.lockfileRequired instanceof Boolean)) {
+    error("Malformed build profile ${expectedId}: lockfileRequired must be boolean")
+  }
+  validateArtifactPath(profile.artifactPath as String)
+  if (profile.monorepo == true) {
+    validateMonorepoProfile(expectedId, profile)
+    return profile
+  }
   ['install', 'test', 'build'].each { key ->
     def command = profile.get(key)
     if (!(command instanceof String) || !(command as String).trim()) {
       error("Malformed build profile ${expectedId}: ${key} must be a non-empty string")
     }
   }
-  if (!(profile.lockfileRequired instanceof Boolean)) {
-    error("Malformed build profile ${expectedId}: lockfileRequired must be boolean")
-  }
-  validateArtifactPath(profile.artifactPath as String)
   return profile
 }
 
@@ -198,7 +208,8 @@ private void validateRuntimeProfileCombination(String profileId, String runtime)
   def expectedRuntimeByProfile = [
     'node-npm-v1': 'node',
     'node-pnpm-v1': 'node',
-    'python-v1': 'python'
+    'python-v1': 'python',
+    'node-npm-exora-monorepo-v1': 'node'
   ]
   if (!expectedRuntimeByProfile.containsKey(profileId)) {
     error("Unsupported build profile: ${profileId}")
@@ -206,6 +217,42 @@ private void validateRuntimeProfileCombination(String profileId, String runtime)
   def expectedRuntime = expectedRuntimeByProfile.get(profileId)
   if (expectedRuntime != runtime) {
     error("Unsupported runtime/profile combination: ${profileId} requires ${expectedRuntime}, got ${runtime}")
+  }
+}
+
+private void validateMonorepoProfile(String profileId, Map profile) {
+  if (profileId != 'node-npm-exora-monorepo-v1') {
+    error("Monorepo profile is not approved for ${profileId}")
+  }
+  if (!(profile.packages instanceof List) || profile.packages.isEmpty()) {
+    error("Malformed build profile ${profileId}: packages must be a non-empty list")
+  }
+  profile.packages.each { pkg ->
+    if (!(pkg instanceof Map)) error("Malformed build profile ${profileId}: package entry must be a mapping")
+    ['name', 'workingDir', 'lockfile', 'install', 'artifactPath', 'artifactTarget'].each { key ->
+      if (!pkg.containsKey(key)) error("Malformed build profile ${profileId}: package missing ${key}")
+    }
+    requireMatch('package.name', pkg.name, /^[a-z0-9][a-z0-9-]{0,63}$/)
+    validateSafeRelativePath(pkg.workingDir as String, 'package.workingDir')
+    validateSafeRelativePath(pkg.lockfile as String, 'package.lockfile')
+    validateSafeRelativePath(pkg.artifactPath as String, 'package.artifactPath')
+    validateSafeRelativePath(pkg.artifactTarget as String, 'package.artifactTarget')
+    validateApprovedMonorepoCommand(pkg.install as String, true)
+    validateApprovedMonorepoCommand(pkg.get('test') as String, false)
+    validateApprovedMonorepoCommand(pkg.get('build') as String, false)
+    if (pkg.lockfile != 'package-lock.json') {
+      error("Unsupported lockfile for ${pkg.name}: ${pkg.lockfile}")
+    }
+  }
+}
+
+private void validateApprovedMonorepoCommand(String command, boolean required) {
+  if (!command || !command.trim()) {
+    if (required) error('Required monorepo command is missing')
+    return
+  }
+  if (!['npm ci', 'npm test', 'npm run build'].contains(command)) {
+    error("Unsupported monorepo command: ${command}")
   }
 }
 
@@ -217,6 +264,15 @@ private void prepareProfileHelpers(Map profile) {
 }
 
 private void enforceLockfilePolicy(Map profile) {
+  if (profile.monorepo == true) {
+    profile.packages.each { pkg ->
+      def lockfilePath = "${pkg.workingDir}/${pkg.lockfile}"
+      if (!fileExists(lockfilePath)) {
+        error("Required lockfile is missing for ${pkg.name}: ${lockfilePath}")
+      }
+    }
+    return
+  }
   if (profile.lockfileRequired != true) return
   def lockfileByProfile = [
     'node-npm-v1': 'package-lock.json',
@@ -229,6 +285,77 @@ private void enforceLockfilePolicy(Map profile) {
   if (!fileExists(lockfile)) {
     error("Required lockfile is missing for ${profile.id}: ${lockfile}")
   }
+}
+
+private void runInstall(Map profile) {
+  if (profile.monorepo == true) {
+    runMonorepoCommand(profile, 'install')
+    return
+  }
+  sh profile.install
+}
+
+private void runTests(Map profile) {
+  if (profile.monorepo == true) {
+    runMonorepoCommand(profile, 'test')
+    return
+  }
+  sh profile.test
+}
+
+private void runBuild(Map profile) {
+  if (profile.monorepo == true) {
+    runMonorepoCommand(profile, 'build')
+    return
+  }
+  sh profile.build
+}
+
+private void runMonorepoCommand(Map profile, String key) {
+  profile.packages.each { pkg ->
+    def command = pkg.get(key)
+    if (!(command instanceof String) || !command.trim()) return
+    def quotedDir = shellQuote(pkg.workingDir as String)
+    sh "cd ${quotedDir} && ${command}"
+  }
+}
+
+private void prepareArtifact(Map profile) {
+  if (profile.monorepo != true) return
+  def root = profile.artifactPath as String
+  sh "rm -rf ${shellQuote(root)} && mkdir -p ${shellQuote(root)}"
+  profile.packages.each { pkg ->
+    copyMonorepoArtifact(pkg, root)
+  }
+}
+
+private void copyMonorepoArtifact(Map pkg, String root) {
+  def source = pkg.artifactPath == '.'
+    ? (pkg.workingDir as String)
+    : "${pkg.workingDir}/${pkg.artifactPath}"
+  def target = "${root}/${pkg.artifactTarget}"
+  sh """
+    set -eu
+    test -e ${shellQuote(source)}
+    test ! -L ${shellQuote(source)}
+    if find ${shellQuote(source)} -type l -print -quit | grep -q .; then
+      echo 'Configured artifact contains symlinks; refusing to package.' >&2
+      exit 1
+    fi
+    mkdir -p ${shellQuote(target)}
+    tar --sort=name --owner=0 --group=0 --numeric-owner --mtime='UTC 1970-01-01' \\
+      --exclude='.git' --exclude='.git/**' \\
+      --exclude='.svn' --exclude='.hg' \\
+      --exclude='.env' --exclude='.env.*' \\
+      --exclude='*/.env' --exclude='*/.env.*' \\
+      --exclude='*.pem' --exclude='*.key' --exclude='*.secret' \\
+      --exclude='*.p12' --exclude='*.pfx' \\
+      --exclude='node_modules' --exclude='node_modules/**' \\
+      --exclude='*/node_modules' --exclude='*/node_modules/**' \\
+      --exclude='npm-cache' --exclude='npm-cache/**' \\
+      --exclude='*/npm-cache' --exclude='*/npm-cache/**' \\
+      -C ${shellQuote(source)} -cf - . | tar -C ${shellQuote(target)} -xf -
+  """
 }
 
 private void packageArtifact(String artifactPath, String artifactName) {
@@ -260,10 +387,14 @@ private void packageArtifact(String artifactPath, String artifactName) {
 }
 
 private void validateArtifactPath(String artifactPath) {
-  requireMatch('artifactPath', artifactPath, /^[A-Za-z0-9._\/-]{1,160}$/)
-  if (artifactPath.startsWith('/') || artifactPath.contains('\\') || artifactPath == '.' ||
-      artifactPath == '..' || artifactPath.contains('../') || artifactPath.contains('/..')) {
-    error("Unsafe artifactPath: ${artifactPath}")
+  validateSafeRelativePath(artifactPath, 'artifactPath')
+}
+
+private void validateSafeRelativePath(String path, String fieldName) {
+  requireMatch(fieldName, path, /^[A-Za-z0-9._\/-]{1,180}$/)
+  if (path.startsWith('/') || path.contains('\\') ||
+      path == '..' || path.contains('../') || path.contains('/..')) {
+    error("Unsafe ${fieldName}: ${path}")
   }
 }
 

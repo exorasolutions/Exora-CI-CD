@@ -1,0 +1,34 @@
+id: node-npm-exora-monorepo-v1
+version: 1
+runtime: node
+lockfileRequired: true
+monorepo: true
+artifactPath: .central-cicd/release
+packages:
+  - name: marketing-client
+    workingDir: exora-mern/client
+    lockfile: package-lock.json
+    install: npm ci
+    build: npm run build
+    artifactPath: dist
+    artifactTarget: marketing-client
+  - name: main-server
+    workingDir: exora-mern/server
+    lockfile: package-lock.json
+    install: npm ci
+    test: npm test
+    artifactPath: .
+    artifactTarget: main-server
+  - name: crm-backend
+    workingDir: exora-mern/exora-crm/backend
+    lockfile: package-lock.json
+    install: npm ci
+    artifactPath: .
+    artifactTarget: crm-backend
+  - name: crm-frontend
+    workingDir: exora-mern/exora-crm/frontend
+    lockfile: package-lock.json
+    install: npm ci
+    build: npm run build
+    artifactPath: dist
+    artifactTarget: crm-frontend
