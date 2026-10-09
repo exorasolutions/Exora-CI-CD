@@ -292,14 +292,17 @@ test('manual and automatic modes skip deployment while execution is disabled', (
   assert.match(pipeline, /stage\('Deployment disabled'\)/);
   assert.match(pipeline, /when \{ expression \{ !deploymentEnabled \} \}/);
   assert.match(pipeline, /when \{ expression \{ deploymentEnabled && cfg\.deploymentMode == 'manual' \} \}/);
-  assert.match(pipeline, /stage\('Deployment handoff'\)[\s\S]*when \{ expression \{ deploymentEnabled \} \}/);
+  assert.match(pipeline, /stage\('Deployment handoff'\)[\s\S]*when \{\s*beforeAgent true\s*expression \{ deploymentEnabled \}\s*\}/);
 });
 
 test('disabled deployment does not require deployment agent or contact deploy worker', () => {
   const pipeline = readFileSync(pipelinePath, 'utf8');
   const disabledStage = pipeline.slice(pipeline.indexOf("stage('Deployment disabled')"), pipeline.indexOf("stage('Manual approval')"));
+  const handoffStage = pipeline.slice(pipeline.indexOf("stage('Deployment handoff')"), pipeline.indexOf('    post {'));
   assert.doesNotMatch(disabledStage, /agent \{ label/);
   assert.doesNotMatch(disabledStage, /centralDeploy|DEPLOY_WORKER|curl/);
+  assert.match(handoffStage, /beforeAgent true/);
+  assert.ok(handoffStage.indexOf('beforeAgent true') < handoffStage.indexOf('agent { label'));
 });
 
 test('central config uses administrator env and full SHA pin', () => {

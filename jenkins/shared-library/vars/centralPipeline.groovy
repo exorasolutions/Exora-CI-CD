@@ -106,7 +106,10 @@ def call(Map cfg = [:]) {
       }
 
       stage('Deployment handoff') {
-        when { expression { deploymentEnabled } }
+        when {
+          beforeAgent true
+          expression { deploymentEnabled }
+        }
         agent { label cfg.deployAgentLabel ?: 'production-deploy' }
         steps {
           deleteDir()
