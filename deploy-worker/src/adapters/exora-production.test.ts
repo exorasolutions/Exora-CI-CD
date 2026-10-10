@@ -53,6 +53,9 @@ test("deploys frontend and backend from a verified artifact and preserves backen
   writeFileSync(path.join(frontendTarget, "old.html"), "old frontend");
   writeFileSync(path.join(backendTarget, ".env"), "SECRET=keep\n");
   writeFileSync(path.join(backendTarget, "server.js"), "old backend\n");
+  mkdirSync(path.join(backendTarget, "logs"), { recursive: true });
+  writeFileSync(path.join(backendTarget, "logs", "exora-api-out.log"), "previous output\n");
+  writeFileSync(path.join(backendTarget, "logs", "exora-api-error.log"), "previous error\n");
 
   const commands: string[] = [];
   await executeExoraProductionDeployment({
@@ -81,9 +84,11 @@ test("deploys frontend and backend from a verified artifact and preserves backen
   assert.equal(existsSync(path.join(frontendTarget, "old.html")), false);
   assert.equal(readFileSync(path.join(backendTarget, ".env"), "utf8"), "SECRET=keep\n");
   assert.match(readFileSync(path.join(backendTarget, "server.js"), "utf8"), /new backend/);
+  assert.equal(readFileSync(path.join(backendTarget, "logs", "exora-api-out.log"), "utf8"), "previous output\n");
+  assert.equal(readFileSync(path.join(backendTarget, "logs", "exora-api-error.log"), "utf8"), "previous error\n");
   assert.deepEqual(commands, [
     `npm ci --omit=dev ${backendTarget}`,
-    `pm2 reload exora-api ${backendTarget}`
+    `sudo /usr/local/sbin/exora-pm2-reload ${backendTarget}`
   ]);
 
   rmSync(dir, { recursive: true, force: true });
@@ -241,7 +246,7 @@ test("rolls back frontend and backend directories when backend command fails", a
   rmSync(dir, { recursive: true, force: true });
 });
 
-test("returned rollback restores directories after a post-deploy health failure", async () => {
+test("continues rollback steps when one returned rollback step fails", async () => {
   const dir = path.join(tmpdir(), `exora-deploy-health-rollback-${process.pid}`);
   rmSync(dir, { recursive: true, force: true });
   const artifactRoot = path.join(dir, "artifact-root", ".central-cicd", "release");
@@ -286,7 +291,78 @@ test("returned rollback restores directories after a post-deploy health failure"
 
   assert.equal(readFileSync(path.join(frontendTarget, "index.html"), "utf8"), "new frontend");
   assert.equal(readFileSync(path.join(backendTarget, "server.js"), "utf8"), "new backend\n");
+
+  // Simulate a missing backend backup: backend rollback fails, but later steps
+  // must still restore the frontend and clean up the prepared release.
+  const backendBackup =
+    `${backendTarget}.rollback-${baseRequest.commitSha.slice(0, 12)}-4-backend`;
+  rmSync(backendBackup, { recursive: true, force: true });
+
+  await assert.rejects(
+    () => deployed.rollback(),
+    (error: unknown) => error instanceof AggregateError
+  );
+
+  assert.equal(readFileSync(path.join(frontendTarget, "index.html"), "utf8"), "old frontend");
+  // A missing backend backup must not cause rollback to delete the current backend.
+  assert.equal(readFileSync(path.join(backendTarget, "server.js"), "utf8"), "new backend\n");
+
+  rmSync(dir, { recursive: true, force: true });
+});
+
+
+test("returned rollback restores directories after a post-deploy health failure", async () => {
+  const dir = path.join(tmpdir(), `exora-deploy-health-rollback-success-${process.pid}`);
+  rmSync(dir, { recursive: true, force: true });
+
+  const artifactRoot = path.join(dir, "artifact-root", ".central-cicd", "release");
+  const frontend = path.join(artifactRoot, "marketing-client", "dist");
+  const backend = path.join(artifactRoot, "main-server");
+  mkdirSync(frontend, { recursive: true });
+  mkdirSync(backend, { recursive: true });
+  writeFileSync(path.join(frontend, "index.html"), "new frontend");
+  writeFileSync(path.join(backend, "server.js"), "new backend\n");
+  writeFileSync(path.join(backend, "package.json"), "{}\n");
+  writeFileSync(path.join(backend, "package-lock.json"), "{}\n");
+
+  const artifact = path.join(dir, "release.tar.gz");
+  execFileSync("tar", ["-czf", artifact, ".central-cicd"], {
+    cwd: path.join(dir, "artifact-root")
+  });
+
+  const prodRoot = path.join(dir, "prod");
+  const frontendTarget = path.join(prodRoot, "exora-mern", "client", "dist");
+  const backendTarget = path.join(prodRoot, "exora-mern", "server");
+  mkdirSync(frontendTarget, { recursive: true });
+  mkdirSync(backendTarget, { recursive: true });
+  writeFileSync(path.join(frontendTarget, "index.html"), "old frontend");
+  writeFileSync(path.join(backendTarget, "server.js"), "old backend\n");
+
+  const deployed = await executeExoraProductionDeployment({
+    target: {
+      id: "exora-production",
+      projectId: "exora",
+      environment: "production",
+      adapter: "exora-production",
+      targetPath: prodRoot
+    },
+    request: { ...baseRequest, artifact: { ...baseRequest.artifact, path: artifact } },
+    deploymentId: 51,
+    workRoot: path.join(dir, "work"),
+    paths: {
+      root: prodRoot,
+      frontendTarget,
+      backendTarget,
+      pm2Process: "exora-api"
+    },
+    run: async () => undefined
+  });
+
+  assert.equal(readFileSync(path.join(frontendTarget, "index.html"), "utf8"), "new frontend");
+  assert.equal(readFileSync(path.join(backendTarget, "server.js"), "utf8"), "new backend\n");
+
   await deployed.rollback();
+
   assert.equal(readFileSync(path.join(frontendTarget, "index.html"), "utf8"), "old frontend");
   assert.equal(readFileSync(path.join(backendTarget, "server.js"), "utf8"), "old backend\n");
 
