@@ -100,7 +100,7 @@ app.post("/deploy", async (req, reply) => {
   let locked = false;
   try {
     const t = await target(client, b.targetId);
-    if (!t || !t.enabled)
+    if (!t || (!t.enabled && b.dryRun !== true))
       return reply.code(403).send({ error: "target disabled or unknown" });
     if (t.projectId !== b.projectId || t.environment !== b.environment)
       return reply.code(403).send({ error: "target mismatch" });

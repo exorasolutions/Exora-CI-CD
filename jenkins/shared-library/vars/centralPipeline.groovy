@@ -95,7 +95,13 @@ def call(Map cfg = [:]) {
       }
 
       stage('Manual approval') {
-        when { expression { deploymentEnabled && cfg.deploymentMode == 'manual' } }
+        when {
+          expression {
+            deploymentEnabled &&
+            cfg.deploymentMode == 'manual' &&
+            optionalAdminEnv('CENTRAL_CICD_DEPLOY_DRY_RUN') != 'true'
+          }
+        }
         steps {
           input(
             message: "Deploy ${cfg.projectId} @ ${cfg.commitSha} to ${cfg.environment ?: 'production'}?",
