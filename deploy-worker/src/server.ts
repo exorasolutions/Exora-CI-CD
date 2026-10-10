@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import { Pool, PoolClient } from "pg";
 import { executeExoraProductionDeployment } from "./adapters/exora-production.js";
 import { assertInside } from "./lib/artifact.js";
+import { validateLiveHealthPolicy } from "./lib/health-policy.js";
 
 type DeployRequest = {
   schemaVersion: number;
@@ -70,7 +71,7 @@ async function unlock(client: PoolClient, project: string, env: string) {
 }
 
 async function health(t: Target) {
-  if (!t.healthUrl) return { ok: true, skipped: true };
+  if (!t.healthUrl) return { ok: false, error: "missing health URL" };
   const expected = t.healthExpectedStatus ?? 200;
   for (let i=1; i<=5; i++) {
     try {
@@ -133,6 +134,8 @@ app.post("/deploy", async (req, reply) => {
       await client.query("COMMIT");
       return { ok:true, state:"DRY_RUN", deploymentId:id, targetId:t.id };
     }
+
+    validateLiveHealthPolicy(t);
 
     let deployed: { rollback: () => Promise<void> } | null = null;
     if (t.adapter === "exora-production") {
