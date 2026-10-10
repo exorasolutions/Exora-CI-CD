@@ -302,7 +302,11 @@ test('disabled deployment does not require deployment agent or contact deploy wo
   assert.doesNotMatch(disabledStage, /agent \{ label/);
   assert.doesNotMatch(disabledStage, /centralDeploy|DEPLOY_WORKER|curl/);
   assert.match(handoffStage, /beforeAgent true/);
-  assert.ok(handoffStage.indexOf('beforeAgent true') < handoffStage.indexOf('agent { label'));
+  assert.doesNotMatch(handoffStage, /agent\s*\{/);
+  assert.doesNotMatch(handoffStage, /node\s*\(/);
+  assert.doesNotMatch(handoffStage, /production-deploy/);
+  assert.doesNotMatch(handoffStage, /unstash|sha256sum|centralDeploy|DEPLOY_WORKER|curl/);
+  assert.match(handoffStage, /Deployment handoff is disabled/);
 });
 
 test('central config uses administrator env and full SHA pin', () => {

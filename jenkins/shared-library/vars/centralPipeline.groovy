@@ -110,13 +110,8 @@ def call(Map cfg = [:]) {
           beforeAgent true
           expression { deploymentEnabled }
         }
-        agent { label cfg.deployAgentLabel ?: 'production-deploy' }
         steps {
-          deleteDir()
-          unstash 'release-artifact'
-          sh "sha256sum -c '${artifactName}.sha256'"
-          echo "Phase 2 safe handoff only: ${cfg.projectId} ${artifactName} -> ${cfg.targetId} (${cfg.deploymentAdapter})"
-          echo 'Real deployment remains disabled until target registry + authenticated deploy-worker phase.'
+          error('Deployment handoff is disabled in this shared-library version. Enable only through a reviewed deployment implementation.')
         }
       }
     }
