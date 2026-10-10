@@ -86,15 +86,43 @@ export async function executeExoraProductionDeployment(ctx: AdapterContext): Pro
       rollbackSteps.unshift(backendRollback);
     }
   } catch (error) {
-    for (const step of rollbackSteps) await step();
+    try {
+      await runRollbackSteps(rollbackSteps);
+    } catch (rollbackError) {
+      throw new AggregateError(
+        [error, rollbackError],
+        `Deployment failed: ${rollbackErrorMessage(error)}; rollback also failed: ${rollbackErrorMessage(rollbackError)}`
+      );
+    }
     throw error;
   }
 
   return {
     rollback: async () => {
-      for (const step of rollbackSteps) await step();
+      await runRollbackSteps(rollbackSteps);
     }
   };
+}
+
+async function runRollbackSteps(steps: Array<() => Promise<void>>): Promise<void> {
+  const errors: unknown[] = [];
+
+  for (const step of steps) {
+    try {
+      await step();
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+
+  if (errors.length > 0) {
+    const details = errors.map(rollbackErrorMessage).join("; ");
+    throw new AggregateError(errors, `One or more rollback steps failed: ${details}`);
+  }
+}
+
+function rollbackErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export class ExoraFrontendAdapter {
@@ -124,7 +152,7 @@ export class ExoraBackendAdapter {
     await restorePersistentBackendState(paths.backendTarget, `${paths.backendTarget}.rollback-${prepared.releaseId}-backend`);
     const run = ctx.run ?? execFileAsync;
     await run("npm", ["ci", "--omit=dev"], { cwd: paths.backendTarget });
-    await run("pm2", ["reload", paths.pm2Process], { cwd: paths.backendTarget });
+    await run("sudo", ["/usr/local/sbin/exora-pm2-reload"], { cwd: paths.backendTarget });
     return rollback;
   }
 }
@@ -211,13 +239,19 @@ async function replaceDirectoryWithRollback(stage: string, target: string, relea
     throw error;
   }
   return async () => {
+    // Verify the old release exists before removing the current target.
+    // If the backup is missing, preserve the current target and report failure.
+    if (hadPrevious) {
+      await fs.access(backup);
+    }
+
     await fs.rm(target, { recursive: true, force: true });
     if (hadPrevious) await fs.rename(backup, target);
   };
 }
 
 async function restorePersistentBackendState(target: string, backup: string): Promise<void> {
-  for (const name of [".env", ".env.production", "uploads", "data"]) {
+  for (const name of [".env", ".env.production", "uploads", "data", "logs"]) {
     const source = path.join(backup, name);
     const dest = path.join(target, name);
 
