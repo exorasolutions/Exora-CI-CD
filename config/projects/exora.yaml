@@ -1,0 +1,21 @@
+schemaVersion: 1
+project:
+  id: exora
+  enabled: true
+  github:
+    owner: yeshwanth1127
+    repo: exora
+    branch: master
+  build:
+    profile: node-npm-exora-monorepo-v1
+    agentLabel: linux-build
+    testsRequired: true
+    timeoutMinutes: 60
+  deployment:
+    mode: manual
+    adapter: exora-production
+    targetId: exora-production
+    environment: production
+  healthCheck:
+    type: http
+    url: http://127.0.0.1:5555/health

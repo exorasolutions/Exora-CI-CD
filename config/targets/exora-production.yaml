@@ -1,0 +1,18 @@
+id: exora-production
+projectId: exora
+environment: production
+adapter: exora-production
+rootPath: /var/www/exora
+releaseRoot: /var/www/exora/.central-cicd/releases
+currentPath: /var/www/exora
+health:
+  type: http
+  url: http://127.0.0.1:5555/health
+  expectedStatus: 200
+  timeoutMs: 10000
+runtime:
+  frontendDist: /var/www/exora/exora-mern/client/dist
+  backendRoot: /var/www/exora/exora-mern/server
+  pm2Process: exora-api
+  apiPort: "5555"
+enabled: false

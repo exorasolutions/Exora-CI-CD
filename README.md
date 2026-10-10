@@ -7,7 +7,7 @@ This is a consolidated development scaffold for a centralized CI/CD platform usi
 - This repository is a scaffold, not a production-ready installer.
 - No server has been changed by creating this archive.
 - Production execution must remain disabled. Keep Jenkins `CENTRAL_CICD_DEPLOYMENT_EXECUTION_ENABLED=false` and deploy-worker `DEPLOY_EXECUTION_ENABLED=false` until the code is reviewed and tested.
-- Phase 5 adapters are foundations/stubs; real process management and deployment commands are not fully implemented.
+- Exora production deployment code is implemented but must remain disabled until the enablement checklist below is completed.
 - Build on the existing VPS only with strict concurrency limits; the VPS has previously had limited free disk and also hosts production apps.
 - Do not add Jenkinsfiles or GitHub Actions workflows to application repositories. CI logic belongs in this central repository/Jenkins configuration.
 
@@ -32,7 +32,7 @@ The pipeline deliberately checks out the central repository into a separate `.ce
 - `CENTRAL_CICD_CONFIG_CREDENTIALS_ID` - optional Jenkins credential ID for the central `exorasolutions/Exora-CI-CD` repository. Leave unset for anonymous checkout when the central repository is public.
 - `CENTRAL_CICD_APP_GITHUB_CREDENTIALS_ID_YESHWANTH1127` - optional Jenkins credential ID for private application repositories owned by `yeshwanth1127`. Leave unset for anonymous checkout when the application repository is public.
 
-If either value is missing, malformed, uses a mutable branch such as `main`, or does not check out to the exact requested commit, the pipeline fails closed. The current approved profile IDs are `node-npm-v1`, `node-pnpm-v1`, and `python-v1`.
+If either value is missing, malformed, uses a mutable branch such as `main`, or does not check out to the exact requested commit, the pipeline fails closed. The current approved profile IDs are `node-npm-v1`, `node-pnpm-v1`, `python-v1`, and `node-npm-exora-monorepo-v1`.
 
 Create Jenkins credentials explicitly when private repository access is needed; GitHub collaborator access alone does not create credentials for Jenkins. Use a GitHub fine-grained personal access token or deploy key stored in Jenkins Credentials, then put only the Jenkins credential ID in the protected administrator environment variable. Never embed tokens in repository URLs, YAML, shell commands, or logs. Webhook payloads and job parameters cannot choose credential IDs.
 
@@ -73,18 +73,51 @@ Every `workingDir`, `lockfile`, `artifactPath`, `artifactIncludes`, and `artifac
 
 The Python profile intentionally creates `artifact/source` from repository source by running the centrally maintained shared-library helper `scripts/package-python-source.py`. It removes any previous `artifact` directory first and ignores generated directories such as `artifact`, `.git`, caches, virtual environments, `dist`, `build`, `.env*` files, and common secret key files so the artifact does not recursively copy itself or include common secrets.
 
+## Exora production policy
+
+The central Exora project registration is `config/projects/exora.yaml`. It accepts GitHub push webhooks only for `yeshwanth1127/exora` on branch `master`; the webhook controller verifies GitHub's `x-hub-signature-256`, rejects duplicate delivery IDs, rejects unregistered repositories and branches, and triggers Jenkins with the exact pushed commit SHA. Webhooks cannot choose deployment targets, credentials, or execution flags.
+
+The approved Exora build profile is `node-npm-exora-monorepo-v1`. It builds only:
+
+- `exora-mern/client` with `npm ci` and `npm run build`, packaging `dist` as `marketing-client`.
+- `exora-mern/server` with `npm ci` and `npm test`, packaging only explicit backend files as `main-server`.
+
+`exora-mern/exora-crm` is intentionally excluded and rejected by profile validation, shared-library validation, and deploy-worker artifact checks.
+
+The production target registration is `config/targets/exora-production.yaml`. It is disabled by default and points at `/var/www/exora`; frontend files publish to `/var/www/exora/exora-mern/client/dist`, backend files publish to `/var/www/exora/exora-mern/server`, PM2 reloads the existing `exora-api` process, and health is checked on `http://127.0.0.1:5555/health`. The adapter preserves backend `.env`, `.env.production`, `uploads`, and `data`, does not edit Nginx, and does not run `pm2 save`.
+
 ## Deployment status and controls
 
-Deployment execution remains disabled. The shared pipeline reads only the Jenkins administrator-managed `CENTRAL_CICD_DEPLOYMENT_EXECUTION_ENABLED` environment variable and defaults to `false`. This shared-library version still refuses `true`; enabling deployment requires a reviewed code change in this repository plus administrator configuration. `DEPLOYMENT_MODE=automatic` only selects approval behavior after deployment is otherwise eligible; it is not permission to deploy and cannot enable execution by itself.
+Deployment execution remains disabled by configuration. The shared pipeline reads only the Jenkins administrator-managed `CENTRAL_CICD_DEPLOYMENT_EXECUTION_ENABLED` environment variable and defaults to `false`. `DEPLOYMENT_MODE=automatic` only selects approval behavior after deployment is otherwise eligible; it is not permission to deploy and cannot enable execution by itself.
 
 When execution is disabled, the pipeline logs that deployment was skipped, does not request the `production-deploy` agent, does not call the deploy worker, and does not execute deployment adapters. Packaging or archiving an artifact must not be interpreted as a successful deployment.
+
+Future controlled deployment tests require these protected Jenkins administrator settings:
+
+- `CENTRAL_CICD_DEPLOYMENT_EXECUTION_ENABLED=false` until the final enablement step.
+- `CENTRAL_CICD_DEPLOY_ARTIFACT_STAGING_ROOT=/opt/cicd/artifacts`, or another reviewed root readable by the deploy worker.
+- `CENTRAL_CICD_DEPLOY_WORKER_URL`, for example `http://127.0.0.1:3220`.
+- `CENTRAL_CICD_DEPLOY_WORKER_TOKEN_CREDENTIALS_ID`, a Jenkins Secret Text credential ID for the deploy-worker bearer token.
+- `CENTRAL_CICD_DEPLOY_DRY_RUN=true` for the first deployment-handoff test.
+
+Create a restricted deployment account on the VPS, for example `exora-deploy`, and run the deploy worker under that account or an equivalently restricted service account. Grant access only to `/opt/cicd/artifacts`, `/opt/cicd/work`, `/var/www/exora/exora-mern/client/dist`, `/var/www/exora/exora-mern/server`, and the ability to reload the existing PM2 process `exora-api`. Do not give the webhook controller SSH keys or production credentials. If Jenkins connects to a deployment node over SSH, store the private key only as a Jenkins SSH credential and bind it to that node configuration, not to webhook payloads or YAML.
 
 The required Jenkins labels are:
 
 - `linux-build` or another centrally approved build-agent label for application builds.
 - `production-deploy` only for a future reviewed deployment handoff. This label is not required while deployment execution is disabled.
 
-Before production deployment can be enabled, the remaining blockers are: authenticated artifact upload or staging contract, target authorization, adapter command review, least-privilege deployment user, health checks, rollback behavior, durable audit/history, and disposable-environment testing. Do not add Docker socket access, privileged containers, hardcoded production credentials, or uncontrolled executors.
+Before production deployment can be enabled, complete this checklist:
+
+1. Pin `CENTRAL_CICD_CONFIG_REF` to the reviewed commit containing the Exora deployment code.
+2. Apply the updated `deploy-worker/schema.sql` adapter enum change and insert/enable only the `exora-production` target after review.
+3. Configure `DEPLOY_ARTIFACT_STAGING_ROOT`, `DEPLOY_WORK_ROOT`, `DEPLOY_WORKER_TOKEN`, and keep `DEPLOY_EXECUTION_ENABLED=false`.
+4. Run a Jenkins build with `CENTRAL_CICD_DEPLOY_DRY_RUN=true` and `CENTRAL_CICD_DEPLOYMENT_EXECUTION_ENABLED=false`; confirm no deployment node is allocated.
+5. Run a reviewed handoff dry run with `CENTRAL_CICD_DEPLOYMENT_EXECUTION_ENABLED=true`, `CENTRAL_CICD_DEPLOY_DRY_RUN=true`, and deploy-worker `DEPLOY_EXECUTION_ENABLED=false`.
+6. Back up `/var/www/exora`, confirm PM2 process `exora-api`, confirm health URL on port `5555`, and verify rollback on a disposable clone or maintenance window.
+7. Only after explicit approval, set deploy-worker `DEPLOY_EXECUTION_ENABLED=true` and run one manual deployment. Do not enable automatic deployment until manual rollback and health-check behavior are verified.
+
+Do not add Docker socket access, privileged containers, hardcoded production credentials, or uncontrolled executors.
 
 ## Recommended next steps
 

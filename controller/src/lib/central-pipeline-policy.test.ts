@@ -165,9 +165,7 @@ test('enforces lockfile policy by approved profile', () => {
   assert.equal(lockfileForProfile(python), null);
   assert.deepEqual(lockfilesForMonorepoProfile(exora), [
     'exora-mern/client/package-lock.json',
-    'exora-mern/server/package-lock.json',
-    'exora-mern/exora-crm/backend/package-lock.json',
-    'exora-mern/exora-crm/frontend/package-lock.json'
+    'exora-mern/server/package-lock.json'
   ]);
 });
 
@@ -178,12 +176,10 @@ test('validates exora monorepo profile package commands and artifact paths', () 
   assert.equal(profile.artifactPath, '.central-cicd/release');
   assert.deepEqual(profile.packages?.map((pkg) => [pkg.name, pkg.workingDir, pkg.install, pkg.test ?? '', pkg.build ?? '', pkg.artifactPath, pkg.artifactTarget]), [
     ['marketing-client', 'exora-mern/client', 'npm ci', '', 'npm run build', 'dist', 'marketing-client'],
-    ['main-server', 'exora-mern/server', 'npm ci', 'npm test', '', undefined, 'main-server'],
-    ['crm-backend', 'exora-mern/exora-crm/backend', 'npm ci', '', '', undefined, 'crm-backend'],
-    ['crm-frontend', 'exora-mern/exora-crm/frontend', 'npm ci', '', 'npm run build', 'dist', 'crm-frontend']
+    ['main-server', 'exora-mern/server', 'npm ci', 'npm test', '', undefined, 'main-server']
   ]);
   const mainServer = profile.packages?.find((pkg) => pkg.name === 'main-server');
-  const crmBackend = profile.packages?.find((pkg) => pkg.name === 'crm-backend');
+  assert.equal(profile.packages?.some((pkg) => pkg.workingDir.includes('exora-crm')), false);
   assert.deepEqual(mainServer?.artifactIncludes, [
     'package.json',
     'package-lock.json',
@@ -198,17 +194,6 @@ test('validates exora monorepo profile package commands and artifact paths', () 
     'registry',
     'routes',
     'scripts',
-    'services'
-  ]);
-  assert.deepEqual(crmBackend?.artifactIncludes, [
-    'package.json',
-    'package-lock.json',
-    'server.js',
-    'crm.json',
-    'config',
-    'jobs',
-    'middleware',
-    'routes',
     'services'
   ]);
 });
@@ -275,7 +260,7 @@ test('rejects unsupported runtime/profile combinations', () => {
 test('deployment execution defaults disabled and is administrator-env controlled', () => {
   assert.equal(deploymentExecutionEnabledFromAdminEnv(undefined), false);
   assert.equal(deploymentExecutionEnabledFromAdminEnv('false'), false);
-  assert.throws(() => deploymentExecutionEnabledFromAdminEnv('true'), /not implemented or permitted/);
+  assert.equal(deploymentExecutionEnabledFromAdminEnv('true'), true);
   assert.throws(() => deploymentExecutionEnabledFromAdminEnv('yes'), /invalid deployment execution flag/);
 
   const pipeline = readFileSync(pipelinePath, 'utf8');
@@ -303,10 +288,11 @@ test('disabled deployment does not require deployment agent or contact deploy wo
   assert.doesNotMatch(disabledStage, /centralDeploy|DEPLOY_WORKER|curl/);
   assert.match(handoffStage, /beforeAgent true/);
   assert.doesNotMatch(handoffStage, /agent\s*\{/);
-  assert.doesNotMatch(handoffStage, /node\s*\(/);
-  assert.doesNotMatch(handoffStage, /production-deploy/);
-  assert.doesNotMatch(handoffStage, /unstash|sha256sum|centralDeploy|DEPLOY_WORKER|curl/);
-  assert.match(handoffStage, /Deployment handoff is disabled/);
+  assert.match(handoffStage, /node\(cfg\.deployAgentLabel \?: 'production-deploy'\)/);
+  assert.ok(handoffStage.indexOf('expression { deploymentEnabled }') < handoffStage.indexOf('node(cfg.deployAgentLabel'));
+  assert.match(handoffStage, /CENTRAL_CICD_DEPLOY_ARTIFACT_STAGING_ROOT/);
+  assert.match(handoffStage, /CENTRAL_CICD_DEPLOY_WORKER_TOKEN_CREDENTIALS_ID/);
+  assert.match(handoffStage, /centralDeploy/);
 });
 
 test('central config uses administrator env and full SHA pin', () => {
@@ -338,6 +324,15 @@ test('checkout credential ids are administrator-managed and not webhook controll
   assert.match(pipeline, /Only yeshwanth1127 repositories are approved/);
   assert.doesNotMatch(pipeline, /cfg\.[A-Za-z0-9_]*credentials/i);
   assert.doesNotMatch(jobTemplate, /CREDENTIALS_ID|credentialsId/);
+});
+
+test('shared library pins Exora deployment parameters centrally', () => {
+  const pipeline = readFileSync(pipelinePath, 'utf8');
+  assert.match(pipeline, /private void enforceProjectDeploymentPolicy\(Map cfg\)/);
+  assert.match(pipeline, /github\\.com\\\/yeshwanth1127\\\/exora/);
+  assert.match(pipeline, /node-npm-exora-monorepo-v1/);
+  assert.match(pipeline, /exora-production/);
+  assert.doesNotMatch(pipeline, /exora-crm.*targetId/s);
 });
 
 test('failed tests or builds cannot proceed to deployment in declarative stage order', () => {

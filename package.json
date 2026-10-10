@@ -4,6 +4,6 @@
   "workspaces": ["controller", "deploy-worker"],
   "scripts": {
     "build": "npm run build --workspace controller && npm run build --workspace deploy-worker",
-    "test": "npm test --workspace controller"
+    "test": "npm test --workspace controller && npm test --workspace deploy-worker"
   }
 }

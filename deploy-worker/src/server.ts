@@ -2,6 +2,8 @@ import Fastify from "fastify";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import { Pool, PoolClient } from "pg";
+import { executeExoraProductionDeployment } from "./adapters/exora-production.js";
+import { assertInside } from "./lib/artifact.js";
 
 type DeployRequest = {
   schemaVersion: number;
@@ -12,13 +14,14 @@ type DeployRequest = {
   targetId: string;
   requestedBy: string;
   jenkinsBuild: string;
+  dryRun?: boolean;
 };
 
 type Target = {
   id: string;
   projectId: string;
   environment: string;
-  adapter: "static" | "pm2" | "systemd" | "compose";
+  adapter: "static" | "pm2" | "systemd" | "compose" | "exora-production";
   targetPath: string;
   healthUrl?: string;
   healthExpectedStatus?: number;
@@ -29,6 +32,8 @@ const app = Fastify({ logger: true });
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const executionEnabled = process.env.DEPLOY_EXECUTION_ENABLED === "true";
 const token = process.env.DEPLOY_WORKER_TOKEN ?? "";
+const artifactStagingRoot = process.env.DEPLOY_ARTIFACT_STAGING_ROOT ?? "/opt/cicd/artifacts";
+const deployWorkRoot = process.env.DEPLOY_WORK_ROOT ?? "/opt/cicd/work";
 
 function equal(a: string, b: string) {
   const x = Buffer.from(a), y = Buffer.from(b);
@@ -100,7 +105,8 @@ app.post("/deploy", async (req, reply) => {
     if (t.projectId !== b.projectId || t.environment !== b.environment)
       return reply.code(403).send({ error: "target mismatch" });
 
-    const actual = await digest(b.artifact.path);
+    const artifactPath = assertInside(b.artifact.path, artifactStagingRoot);
+    const actual = await digest(artifactPath);
     if (actual.toLowerCase() !== b.artifact.sha256.toLowerCase())
       return reply.code(409).send({ error: "artifact digest mismatch" });
 
@@ -119,7 +125,7 @@ app.post("/deploy", async (req, reply) => {
        t.adapter,b.requestedBy,b.jenkinsBuild]);
     const id = r.rows[0].id;
 
-    if (!executionEnabled) {
+    if (!executionEnabled || b.dryRun === true) {
       await client.query(
         "UPDATE deployments SET state='DRY_RUN', finished_at=now() WHERE id=$1",[id]);
       await unlock(client,b.projectId,b.environment);
@@ -128,13 +134,21 @@ app.post("/deploy", async (req, reply) => {
       return { ok:true, state:"DRY_RUN", deploymentId:id, targetId:t.id };
     }
 
-    // Adapter execution remains intentionally disabled in this phase.
-    // A later phase will invoke reviewed adapters using fixed targets.
-    await client.query(
-      "UPDATE deployments SET state='ADAPTER_PENDING' WHERE id=$1",[id]);
+    let deployed: { rollback: () => Promise<void> } | null = null;
+    if (t.adapter === "exora-production") {
+      deployed = await executeExoraProductionDeployment({
+        target: t,
+        request: { ...b, artifact: { ...b.artifact, path: artifactPath } },
+        deploymentId: id,
+        workRoot: deployWorkRoot
+      });
+    } else {
+      throw new Error(`adapter is not enabled for execution: ${t.adapter}`);
+    }
 
     const hc = await health(t);
     const state = hc.ok ? "SUCCEEDED" : "HEALTH_FAILED";
+    if (!hc.ok && deployed) await deployed.rollback();
     await client.query(
       "UPDATE deployments SET state=$1, finished_at=now(), health_result=$2 WHERE id=$3",
       [state, JSON.stringify(hc), id]);

@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "test": "node --import tsx --test src/**/*.test.ts"
   },
   "dependencies": {
     "fastify": "^5.0.0",

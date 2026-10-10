@@ -22,7 +22,7 @@ export const ProjectFile = z.object({
     }),
     deployment: z.object({
       mode: z.enum(['manual', 'automatic']),
-      adapter: z.enum(['pm2', 'systemd', 'static', 'compose', 'python']),
+      adapter: z.enum(['pm2', 'systemd', 'static', 'compose', 'python', 'exora-production']),
       targetId: z.string().min(1),
       environment: z.string().min(1).default('production')
     }),

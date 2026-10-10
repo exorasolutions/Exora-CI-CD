@@ -111,7 +111,34 @@ def call(Map cfg = [:]) {
           expression { deploymentEnabled }
         }
         steps {
-          error('Deployment handoff is disabled in this shared-library version. Enable only through a reviewed deployment implementation.')
+          script {
+            node(cfg.deployAgentLabel ?: 'production-deploy') {
+              deleteDir()
+              unstash 'release-artifact'
+              sh "sha256sum -c ${shellQuote("${artifactName}.sha256")}"
+              def artifactSha256 = readFile("${artifactName}.sha256").trim().substring(0, 64)
+              def stagingRoot = requireAdminEnv('CENTRAL_CICD_DEPLOY_ARTIFACT_STAGING_ROOT')
+              validateAbsolutePath(stagingRoot, 'CENTRAL_CICD_DEPLOY_ARTIFACT_STAGING_ROOT')
+              def stagingDir = "${stagingRoot}/${cfg.projectId}/${env.BUILD_NUMBER}"
+              sh "mkdir -p ${shellQuote(stagingDir)} && cp ${shellQuote(artifactName)} ${shellQuote("${artifactName}.sha256")} ${shellQuote(stagingDir)}/"
+              def workerUrl = requireAdminEnv('CENTRAL_CICD_DEPLOY_WORKER_URL')
+              def tokenCredentialId = requireAdminEnv('CENTRAL_CICD_DEPLOY_WORKER_TOKEN_CREDENTIALS_ID')
+              def dryRun = optionalAdminEnv('CENTRAL_CICD_DEPLOY_DRY_RUN') == 'true'
+              withCredentials([string(credentialsId: tokenCredentialId, variable: 'DEPLOY_WORKER_TOKEN')]) {
+                withEnv(["DEPLOY_WORKER_URL=${workerUrl}"]) {
+                  centralDeploy(
+                    projectId: cfg.projectId,
+                    environment: cfg.environment ?: 'production',
+                    commitSha: cfg.commitSha,
+                    artifactPath: "${stagingDir}/${artifactName}",
+                    artifactSha256: artifactSha256,
+                    targetId: cfg.targetId,
+                    dryRun: dryRun
+                  )
+                }
+              }
+            }
+          }
         }
       }
     }
@@ -136,6 +163,27 @@ private void validatePipelineConfig(Map cfg) {
   }
   if (cfg.targetId) requireMatch('targetId', cfg.targetId, /^[a-zA-Z0-9_.-]{1,128}$/)
   if (cfg.environment) requireMatch('environment', cfg.environment, /^[a-zA-Z0-9_.-]{1,64}$/)
+  enforceProjectDeploymentPolicy(cfg)
+}
+
+private void enforceProjectDeploymentPolicy(Map cfg) {
+  if (cfg.projectId == 'exora') {
+    if (!(cfg.repository ==~ /^https:\/\/github\.com\/yeshwanth1127\/exora(\.git)?$/)) {
+      error("Invalid Exora repository: ${cfg.repository}")
+    }
+    if (cfg.buildProfile != 'node-npm-exora-monorepo-v1') {
+      error("Invalid Exora build profile: ${cfg.buildProfile}")
+    }
+    if (cfg.targetId != 'exora-production') {
+      error("Invalid Exora deployment target: ${cfg.targetId}")
+    }
+    if (cfg.deploymentAdapter != 'exora-production') {
+      error("Invalid Exora deployment adapter: ${cfg.deploymentAdapter}")
+    }
+    if ((cfg.environment ?: 'production') != 'production') {
+      error("Invalid Exora environment: ${cfg.environment}")
+    }
+  }
 }
 
 private Map loadBuildProfile(Map cfg) {
@@ -233,6 +281,9 @@ private void validateMonorepoProfile(String profileId, Map profile) {
       if (!pkg.containsKey(key)) error("Malformed build profile ${profileId}: package missing ${key}")
     }
     requireMatch('package.name', pkg.name, /^[a-z0-9][a-z0-9-]{0,63}$/)
+    if ((pkg.workingDir as String).contains('exora-crm') || (pkg.artifactTarget as String).contains('crm')) {
+      error('exora-crm is not an approved deployment component')
+    }
     if (names.contains(pkg.name as String)) {
       error("Duplicate monorepo package name: ${pkg.name}")
     }
@@ -475,10 +526,7 @@ private boolean deploymentExecutionEnabled() {
   if (!['true', 'false'].contains(enabled)) {
     error('Invalid administrator setting CENTRAL_CICD_DEPLOYMENT_EXECUTION_ENABLED. Expected true or false.')
   }
-  if (enabled == 'true') {
-    error('Deployment execution is not implemented or permitted by this shared-library version.')
-  }
-  return false
+  return enabled == 'true'
 }
 
 private void requireRepositoryUrl(Object value) {
@@ -546,6 +594,11 @@ private String requireAdminEnv(String name) {
   return value.trim()
 }
 
+private String optionalAdminEnv(String name) {
+  def value = adminEnvValue(name)
+  return value instanceof String ? value.trim() : ''
+}
+
 private String adminEnvValue(String name) {
   if (name == 'CENTRAL_CICD_CONFIG_REPOSITORY') {
     return env.CENTRAL_CICD_CONFIG_REPOSITORY
@@ -559,7 +612,26 @@ private String adminEnvValue(String name) {
   if (name == 'CENTRAL_CICD_APP_GITHUB_CREDENTIALS_ID_YESHWANTH1127') {
     return env.CENTRAL_CICD_APP_GITHUB_CREDENTIALS_ID_YESHWANTH1127
   }
+  if (name == 'CENTRAL_CICD_DEPLOY_ARTIFACT_STAGING_ROOT') {
+    return env.CENTRAL_CICD_DEPLOY_ARTIFACT_STAGING_ROOT
+  }
+  if (name == 'CENTRAL_CICD_DEPLOY_WORKER_URL') {
+    return env.CENTRAL_CICD_DEPLOY_WORKER_URL
+  }
+  if (name == 'CENTRAL_CICD_DEPLOY_WORKER_TOKEN_CREDENTIALS_ID') {
+    return env.CENTRAL_CICD_DEPLOY_WORKER_TOKEN_CREDENTIALS_ID
+  }
+  if (name == 'CENTRAL_CICD_DEPLOY_DRY_RUN') {
+    return env.CENTRAL_CICD_DEPLOY_DRY_RUN
+  }
   error("Unsupported administrator environment variable: ${name}")
+}
+
+private void validateAbsolutePath(String path, String fieldName) {
+  requireMatch(fieldName, path, /^\/[A-Za-z0-9._\/-]{1,180}$/)
+  if (path.contains('/../') || path.endsWith('/..')) {
+    error("Unsafe ${fieldName}: ${path}")
+  }
 }
 
 private String shellQuote(String value) {

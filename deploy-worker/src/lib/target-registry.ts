@@ -7,7 +7,7 @@ const Target = z.object({
   id: z.string().min(1),
   projectId: z.string().min(1),
   environment: z.string().min(1),
-  adapter: z.enum(['pm2','systemd','static','compose','python']),
+  adapter: z.enum(['pm2','systemd','static','compose','python','exora-production']),
   rootPath: z.string().startsWith('/'),
   releaseRoot: z.string().startsWith('/'),
   currentPath: z.string().startsWith('/'),

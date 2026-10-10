@@ -2,7 +2,7 @@ CREATE TABLE IF NOT EXISTS deployment_targets (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL,
   environment TEXT NOT NULL,
-  adapter TEXT NOT NULL CHECK (adapter IN ('static','pm2','systemd','compose')),
+  adapter TEXT NOT NULL CHECK (adapter IN ('static','pm2','systemd','compose','exora-production')),
   target_path TEXT NOT NULL,
   health_url TEXT,
   health_expected_status INTEGER NOT NULL DEFAULT 200,

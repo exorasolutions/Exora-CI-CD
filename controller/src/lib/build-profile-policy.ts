@@ -116,8 +116,7 @@ export function validateArtifactName(value: string) {
 export function deploymentExecutionEnabledFromAdminEnv(value: string | undefined): boolean {
   const normalized = (value ?? 'false').trim();
   if (!['true', 'false'].includes(normalized)) throw new Error('invalid deployment execution flag');
-  if (normalized === 'true') throw new Error('deployment execution is not implemented or permitted');
-  return false;
+  return normalized === 'true';
 }
 
 function isApprovedProfileId(value: string): value is ApprovedProfileId {
@@ -136,11 +135,13 @@ function validateMonorepoProfile(expectedId: string, profile: Record<string, unk
       if (!(key in pkg)) throw new Error(`Malformed build profile ${expectedId}: package missing ${key}`);
     }
     const packageName = String(pkg.name);
+    const workingDir = String(pkg.workingDir);
     const artifactTarget = String(pkg.artifactTarget);
     if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(packageName)) throw new Error('invalid package name');
+    if (workingDir.includes('exora-crm') || artifactTarget.includes('crm')) throw new Error('exora-crm is not an approved deployment component');
     if (names.has(packageName)) throw new Error(`Duplicate monorepo package name: ${packageName}`);
     names.add(packageName);
-    validateArtifactPath(String(pkg.workingDir));
+    validateArtifactPath(workingDir);
     validateArtifactPath(String(pkg.lockfile));
     validateArtifactPath(artifactTarget);
     if (targets.has(artifactTarget)) throw new Error(`Duplicate monorepo artifact target: ${artifactTarget}`);
