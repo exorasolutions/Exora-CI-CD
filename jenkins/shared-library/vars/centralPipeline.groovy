@@ -126,23 +126,29 @@ def call(Map cfg = [:]) {
               def stagingRoot = requireAdminEnv('CENTRAL_CICD_DEPLOY_ARTIFACT_STAGING_ROOT')
               validateAbsolutePath(stagingRoot, 'CENTRAL_CICD_DEPLOY_ARTIFACT_STAGING_ROOT')
               def stagingDir = "${stagingRoot}/${cfg.projectId}/${env.BUILD_NUMBER}"
+              sh '''
+                echo "=== HANDOFF USER ==="
+                id
+                echo "=== HANDOFF PATHS ==="
+                ls -ldn /opt /opt/cicd /opt/cicd/artifacts
+                echo "=== HANDOFF MOUNT ==="
+                grep "/opt/cicd/artifacts" /proc/mounts || true
+                echo "=== HANDOFF WRITE TEST ==="
+                touch /opt/cicd/artifacts/.jenkins-handoff-test
+                rm /opt/cicd/artifacts/.jenkins-handoff-test
+                echo "HANDOFF_WRITE_TEST=PASS"
+              '''
               sh "mkdir -p ${shellQuote(stagingDir)} && cp ${shellQuote(artifactName)} ${shellQuote("${artifactName}.sha256")} ${shellQuote(stagingDir)}/"
-              def workerUrl = requireAdminEnv('CENTRAL_CICD_DEPLOY_WORKER_URL')
-              def tokenCredentialId = requireAdminEnv('CENTRAL_CICD_DEPLOY_WORKER_TOKEN_CREDENTIALS_ID')
               def dryRun = optionalAdminEnv('CENTRAL_CICD_DEPLOY_DRY_RUN') == 'true'
-              withCredentials([string(credentialsId: tokenCredentialId, variable: 'DEPLOY_WORKER_TOKEN')]) {
-                withEnv(["DEPLOY_WORKER_URL=${workerUrl}"]) {
-                  centralDeploy(
-                    projectId: cfg.projectId,
-                    environment: cfg.environment ?: 'production',
-                    commitSha: cfg.commitSha,
-                    artifactPath: "${stagingDir}/${artifactName}",
-                    artifactSha256: artifactSha256,
-                    targetId: cfg.targetId,
-                    dryRun: dryRun
-                  )
-                }
-              }
+              centralDeploy(
+                projectId: cfg.projectId,
+                environment: cfg.environment ?: 'production',
+                commitSha: cfg.commitSha,
+                artifactPath: "${stagingDir}/${artifactName}",
+                artifactSha256: artifactSha256,
+                targetId: cfg.targetId,
+                dryRun: dryRun
+              )
             }
           }
         }

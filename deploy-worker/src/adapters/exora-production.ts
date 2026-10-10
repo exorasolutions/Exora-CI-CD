@@ -75,14 +75,16 @@ export async function executeExoraProductionDeployment(ctx: AdapterContext): Pro
   validateExoraProductionTarget(ctx.target, ctx.request, paths);
   const prepared = await prepareVerifiedRelease(ctx);
   const frontend = new ExoraFrontendAdapter();
-  const backend = new ExoraBackendAdapter();
   const rollbackSteps: Array<() => Promise<void>> = [prepared.rollback];
 
   try {
     const frontendRollback = await frontend.deploy(prepared, { ...ctx, paths });
     rollbackSteps.unshift(frontendRollback);
+    const backend = new ExoraBackendAdapter((rollback) => rollbackSteps.unshift(rollback));
     const backendRollback = await backend.deploy(prepared, { ...ctx, paths });
-    rollbackSteps.unshift(backendRollback);
+    if (!rollbackSteps.includes(backendRollback)) {
+      rollbackSteps.unshift(backendRollback);
+    }
   } catch (error) {
     for (const step of rollbackSteps) await step();
     throw error;
@@ -107,6 +109,8 @@ export class ExoraFrontendAdapter {
 }
 
 export class ExoraBackendAdapter {
+  constructor(private readonly onDirectoryReplaced?: (rollback: () => Promise<void>) => void) {}
+
   async deploy(prepared: PreparedRelease, ctx: AdapterContext): Promise<() => Promise<void>> {
     const source = safeJoin(prepared.extractedRoot, BACKEND_SOURCE);
     await assertDirectoryWithoutSymlinks(source);
@@ -116,15 +120,11 @@ export class ExoraBackendAdapter {
 
     const paths = ctx.paths ?? PRODUCTION_PATHS;
     const rollback = await replaceDirectoryWithRollback(stage, paths.backendTarget, prepared.releaseId, "backend");
+    this.onDirectoryReplaced?.(rollback);
     await restorePersistentBackendState(paths.backendTarget, `${paths.backendTarget}.rollback-${prepared.releaseId}-backend`);
     const run = ctx.run ?? execFileAsync;
-    try {
-      await run("npm", ["ci", "--omit=dev"], { cwd: paths.backendTarget });
-      await run("pm2", ["reload", paths.pm2Process], { cwd: paths.backendTarget });
-    } catch (error) {
-      await rollback();
-      throw error;
-    }
+    await run("npm", ["ci", "--omit=dev"], { cwd: paths.backendTarget });
+    await run("pm2", ["reload", paths.pm2Process], { cwd: paths.backendTarget });
     return rollback;
   }
 }
@@ -136,11 +136,7 @@ async function prepareVerifiedRelease(ctx: AdapterContext): Promise<PreparedRele
   await fs.rm(releaseRoot, { recursive: true, force: true });
   await fs.mkdir(releaseRoot, { recursive: true });
 
-  const entries = await listArchiveEntries(ctx.request.artifact.path);
-  for (const entry of entries) {
-    assertSafeArchiveEntry(entry);
-    if (entry.includes("exora-crm")) throw new Error("artifact contains forbidden exora-crm path");
-  }
+  await validateArchiveBeforeExtraction(ctx.request.artifact.path);
 
   await execFileAsync("tar", ["-xzf", ctx.request.artifact.path, "-C", releaseRoot]);
   await assertDirectoryWithoutSymlinks(releaseRoot);
@@ -160,21 +156,58 @@ async function listArchiveEntries(artifactPath: string): Promise<string[]> {
   return stdout.split(/\r?\n/).filter(Boolean);
 }
 
+async function validateArchiveBeforeExtraction(artifactPath: string): Promise<void> {
+  const entries = await listArchiveEntries(artifactPath);
+  for (const entry of entries) validateArchiveEntryName(entry);
+
+  const { stdout } = await execFileAsync("tar", ["-tvzf", artifactPath]);
+  for (const line of stdout.split(/\r?\n/).filter(Boolean)) {
+    const entry = parseVerboseTarEntry(line);
+    validateArchiveEntryName(entry.name);
+    if (!["file", "directory"].includes(entry.type)) {
+      throw new Error(`unsupported archive entry type for ${entry.name}: ${entry.type}`);
+    }
+  }
+}
+
+function validateArchiveEntryName(entry: string): void {
+  assertSafeArchiveEntry(entry);
+  if (entry.includes("exora-crm")) throw new Error("artifact contains forbidden exora-crm path");
+}
+
+function parseVerboseTarEntry(line: string): { type: string; name: string } {
+  const marker = line[0];
+  const type = marker === "d" ? "directory" : marker === "-" ? "file" : marker === "l" ? "symlink" : marker === "h" ? "hardlink" : "other";
+  const parts = line.trim().split(/\s+/);
+  if (parts.length < 6) throw new Error(`unable to parse tar entry metadata: ${line}`);
+  const name = parts.slice(5).join(" ").replace(/\s+->\s+.*$/, "");
+  return { type, name };
+}
+
 async function replaceDirectoryWithRollback(stage: string, target: string, releaseId: string, label: string): Promise<() => Promise<void>> {
   const parent = path.dirname(target);
   const backup = `${target}.rollback-${releaseId}-${label}`;
   await fs.mkdir(parent, { recursive: true });
   await fs.rm(backup, { recursive: true, force: true });
   let hadPrevious = false;
+
   try {
     await fs.access(target);
     hadPrevious = true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+  }
+
+  if (hadPrevious) {
     await fs.rename(target, backup);
-  } catch {}
+  }
+
   try {
     await fs.rename(stage, target);
   } catch (error) {
-    if (hadPrevious) await fs.rename(backup, target).catch(() => undefined);
+    if (hadPrevious) await fs.rename(backup, target);
     throw error;
   }
   return async () => {
@@ -187,11 +220,18 @@ async function restorePersistentBackendState(target: string, backup: string): Pr
   for (const name of [".env", ".env.production", "uploads", "data"]) {
     const source = path.join(backup, name);
     const dest = path.join(target, name);
+
     try {
       await fs.access(source);
-      await fs.rm(dest, { recursive: true, force: true });
-      await fs.cp(source, dest, { recursive: true, errorOnExist: false });
-    } catch {}
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        continue;
+      }
+      throw error;
+    }
+
+    await fs.rm(dest, { recursive: true, force: true });
+    await fs.cp(source, dest, { recursive: true, errorOnExist: false });
   }
 }
 

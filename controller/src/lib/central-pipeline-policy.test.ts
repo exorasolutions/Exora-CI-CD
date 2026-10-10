@@ -23,6 +23,7 @@ import {
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const profileDir = join(repoRoot, 'config/build-profiles');
 const pipelinePath = join(repoRoot, 'jenkins/shared-library/vars/centralPipeline.groovy');
+const deployPath = join(repoRoot, 'jenkins/shared-library/vars/centralDeploy.groovy');
 const jobTemplatePath = join(repoRoot, 'jenkins/job-templates/central-cicd-build.xml.template');
 const pythonPackageHelperPath = join(repoRoot, 'jenkins/shared-library/resources/scripts/package-python-source.py');
 
@@ -276,7 +277,7 @@ test('manual and automatic modes skip deployment while execution is disabled', (
   const pipeline = readFileSync(pipelinePath, 'utf8');
   assert.match(pipeline, /stage\('Deployment disabled'\)/);
   assert.match(pipeline, /when \{ expression \{ !deploymentEnabled \} \}/);
-  assert.match(pipeline, /when \{ expression \{ deploymentEnabled && cfg\.deploymentMode == 'manual' \} \}/);
+  assert.match(pipeline, /deploymentEnabled &&\s*cfg\.deploymentMode == 'manual' &&\s*optionalAdminEnv\('CENTRAL_CICD_DEPLOY_DRY_RUN'\) != 'true'/);
   assert.match(pipeline, /stage\('Deployment handoff'\)[\s\S]*when \{\s*beforeAgent true\s*expression \{ deploymentEnabled \}\s*\}/);
 });
 
@@ -291,8 +292,11 @@ test('disabled deployment does not require deployment agent or contact deploy wo
   assert.match(handoffStage, /node\(cfg\.deployAgentLabel \?: 'production-deploy'\)/);
   assert.ok(handoffStage.indexOf('expression { deploymentEnabled }') < handoffStage.indexOf('node(cfg.deployAgentLabel'));
   assert.match(handoffStage, /CENTRAL_CICD_DEPLOY_ARTIFACT_STAGING_ROOT/);
-  assert.match(handoffStage, /CENTRAL_CICD_DEPLOY_WORKER_TOKEN_CREDENTIALS_ID/);
   assert.match(handoffStage, /centralDeploy/);
+  const deploy = readFileSync(deployPath, 'utf8');
+  assert.match(deploy, /CENTRAL_CICD_DEPLOY_WORKER_URL/);
+  assert.match(deploy, /CENTRAL_CICD_DEPLOY_WORKER_TOKEN_CREDENTIALS_ID/);
+  assert.match(deploy, /withCredentials/);
 });
 
 test('central config uses administrator env and full SHA pin', () => {
