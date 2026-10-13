@@ -197,6 +197,11 @@ private void enforceProjectDeploymentPolicy(Map cfg) {
       error("Invalid Exora build profile: ${cfg.buildProfile}")
     }
 
+    // Resolve missing values from the centrally approved profile mapping.
+    // Explicit, conflicting values are still rejected below.
+    if (!cfg.targetId) cfg.targetId = expectedTarget
+    if (!cfg.deploymentAdapter) cfg.deploymentAdapter = expectedAdapter
+
     if (cfg.targetId != expectedTarget) {
       error("Invalid Exora deployment target for ${cfg.buildProfile}: ${cfg.targetId}")
     }
