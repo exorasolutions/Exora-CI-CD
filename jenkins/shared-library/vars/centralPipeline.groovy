@@ -183,14 +183,25 @@ private void enforceProjectDeploymentPolicy(Map cfg) {
     if (!(cfg.repository ==~ /^https:\/\/github\.com\/yeshwanth1127\/exora(\.git)?$/)) {
       error("Invalid Exora repository: ${cfg.repository}")
     }
-    if (cfg.buildProfile != 'node-npm-exora-monorepo-v1') {
+
+    def expectedTarget
+    def expectedAdapter
+
+    if (cfg.buildProfile == 'node-npm-static-site-v1') {
+      expectedTarget = 'exora-static'
+      expectedAdapter = 'exora-static'
+    } else if (cfg.buildProfile == 'node-npm-exora-monorepo-v1') {
+      expectedTarget = 'exora-production'
+      expectedAdapter = 'exora-production'
+    } else {
       error("Invalid Exora build profile: ${cfg.buildProfile}")
     }
-    if (cfg.targetId != 'exora-production') {
-      error("Invalid Exora deployment target: ${cfg.targetId}")
+
+    if (cfg.targetId != expectedTarget) {
+      error("Invalid Exora deployment target for ${cfg.buildProfile}: ${cfg.targetId}")
     }
-    if (cfg.deploymentAdapter != 'exora-production') {
-      error("Invalid Exora deployment adapter: ${cfg.deploymentAdapter}")
+    if (cfg.deploymentAdapter != expectedAdapter) {
+      error("Invalid Exora deployment adapter for ${cfg.buildProfile}: ${cfg.deploymentAdapter}")
     }
     if ((cfg.environment ?: 'production') != 'production') {
       error("Invalid Exora environment: ${cfg.environment}")
