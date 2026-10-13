@@ -1,0 +1,20 @@
+schemaVersion: 1
+project:
+  id: sunkidz
+  enabled: true
+  github:
+    owner: yeshwanth1127
+    repo: sunkidz
+    branch: master
+  build:
+    profile: node-npm-sunkidz-compose-source-v1
+    agentLabel: linux-build
+    testsRequired: true
+    timeoutMinutes: 45
+  deployment:
+    mode: manual
+    adapter: compose
+    targetId: sunkidz-production
+    environment: production
+  healthCheck:
+    type: none

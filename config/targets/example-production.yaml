@@ -1,17 +1,15 @@
 id: example-production
 projectId: example-project
 environment: production
-adapter: static
-target:
-  root: /var/www/example
-release:
-  strategy: atomic-symlink
-  keep: 5
+adapter: pm2
+rootPath: /srv/apps/example
+releaseRoot: /srv/apps/example/.central-cicd/releases
+currentPath: /srv/apps/example/current
 health:
+  type: http
   url: https://example.invalid/health
   expectedStatus: 200
-  timeoutSeconds: 10
-  attempts: 5
-rollback:
-  enabled: true
+  timeoutMs: 10000
+runtime:
+  processName: example-app
 enabled: false

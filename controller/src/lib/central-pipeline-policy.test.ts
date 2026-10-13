@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
@@ -19,6 +19,7 @@ import {
   validateCommitSha,
   validateRepositoryUrl
 } from './build-profile-policy.js';
+import { ProjectFile } from './project-registry.js';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const profileDir = join(repoRoot, 'config/build-profiles');
@@ -26,6 +27,7 @@ const pipelinePath = join(repoRoot, 'jenkins/shared-library/vars/centralPipeline
 const deployPath = join(repoRoot, 'jenkins/shared-library/vars/centralDeploy.groovy');
 const jobTemplatePath = join(repoRoot, 'jenkins/job-templates/central-cicd-build.xml.template');
 const pythonPackageHelperPath = join(repoRoot, 'jenkins/shared-library/resources/scripts/package-python-source.py');
+const projectDir = join(repoRoot, 'config/projects');
 
 function assertArtifactOutput(path: string) {
   if (!existsSync(path)) throw new Error('missing artifact output');
@@ -48,6 +50,34 @@ test('loads and validates each centrally approved build profile', () => {
       assert.ok(profile.build);
     }
   }
+});
+
+test('loads every project config and maps each repository only once', () => {
+  const seenProjects = new Set<string>();
+  const seenRepos = new Set<string>();
+  const expectedProjects = new Set([
+    'cab',
+    'exora',
+    'exora-crm',
+    'exora-shared-services',
+    'loomrun',
+    'qlix',
+    'sunkidz'
+  ]);
+
+  for (const file of readdirSync(projectDir).filter((name) => /\.ya?ml$/i.test(name))) {
+    const parsed = ProjectFile.parse(YAML.parse(readFileSync(join(projectDir, file), 'utf8')));
+    const project = parsed.project;
+    assert.equal(seenProjects.has(project.id), false, `duplicate project id ${project.id}`);
+    seenProjects.add(project.id);
+    const repo = `${project.github.owner}/${project.github.repo}`.toLowerCase();
+    assert.equal(seenRepos.has(repo), false, `duplicate repository mapping ${repo}`);
+    seenRepos.add(repo);
+    assert.ok(approvedProfileIds.includes(project.build.profile as typeof approvedProfileIds[number]));
+    assert.equal(project.deployment.mode, 'manual');
+  }
+
+  for (const id of expectedProjects) assert.equal(seenProjects.has(id), true, `missing project ${id}`);
 });
 
 test('rejects unknown build profile id', () => {
@@ -324,8 +354,10 @@ test('checkout credential ids are administrator-managed and not webhook controll
   const jobTemplate = readFileSync(jobTemplatePath, 'utf8');
   assert.match(pipeline, /CENTRAL_CICD_CONFIG_CREDENTIALS_ID/);
   assert.match(pipeline, /CENTRAL_CICD_APP_GITHUB_CREDENTIALS_ID_YESHWANTH1127/);
+  assert.match(pipeline, /CENTRAL_CICD_APP_GITHUB_CREDENTIALS_ID_RVAMSI201_VK/);
   assert.match(pipeline, /credentialsId = credentialsId/);
-  assert.match(pipeline, /Only yeshwanth1127 repositories are approved/);
+  assert.match(pipeline, /credentialEnvByOwner/);
+  assert.match(pipeline, /Unsupported application repository owner/);
   assert.doesNotMatch(pipeline, /cfg\.[A-Za-z0-9_]*credentials/i);
   assert.doesNotMatch(jobTemplate, /CREDENTIALS_ID|credentialsId/);
 });
@@ -336,6 +368,8 @@ test('shared library pins Exora deployment parameters centrally', () => {
   assert.match(pipeline, /github\\.com\\\/yeshwanth1127\\\/exora/);
   assert.match(pipeline, /node-npm-exora-monorepo-v1/);
   assert.match(pipeline, /exora-production/);
+  assert.match(pipeline, /node-npm-static-site-v1/);
+  assert.match(pipeline, /exora-static/);
   assert.doesNotMatch(pipeline, /exora-crm.*targetId/s);
 });
 

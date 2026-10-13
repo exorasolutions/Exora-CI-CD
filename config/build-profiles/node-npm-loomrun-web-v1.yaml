@@ -1,0 +1,14 @@
+id: node-npm-loomrun-web-v1
+version: 1
+runtime: node
+lockfileRequired: true
+monorepo: true
+artifactPath: .central-cicd/release
+packages:
+  - name: loomrun-web
+    workingDir: apps/web
+    lockfile: package-lock.json
+    install: npm ci
+    build: npm run build
+    artifactPath: dist
+    artifactTarget: web

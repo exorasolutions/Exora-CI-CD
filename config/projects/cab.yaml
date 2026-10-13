@@ -1,0 +1,20 @@
+schemaVersion: 1
+project:
+  id: cab
+  enabled: true
+  github:
+    owner: yeshwanth1127
+    repo: cab
+    branch: master
+  build:
+    profile: node-npm-cab-monorepo-v1
+    agentLabel: linux-build
+    testsRequired: false
+    timeoutMinutes: 60
+  deployment:
+    mode: manual
+    adapter: compose
+    targetId: cab-production
+    environment: production
+  healthCheck:
+    type: none
