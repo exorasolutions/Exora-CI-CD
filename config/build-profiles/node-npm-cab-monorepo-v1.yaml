@@ -1,0 +1,33 @@
+id: node-npm-cab-monorepo-v1
+version: 1
+runtime: node
+lockfileRequired: true
+monorepo: true
+artifactPath: .central-cicd/release
+packages:
+  - name: cab-backend
+    workingDir: backend
+    lockfile: package-lock.json
+    install: npm ci
+    build: npm run build
+    artifactTarget: backend
+    artifactIncludes:
+      - package.json
+      - package-lock.json
+      - server.js
+      - index.js
+      - Dockerfile
+      - assets
+      - db
+      - middleware
+      - routes
+      - scripts
+      - services
+      - utils
+  - name: cab-frontend
+    workingDir: frontend
+    lockfile: package-lock.json
+    install: npm ci
+    build: npm run build
+    artifactPath: build
+    artifactTarget: frontend

@@ -1,0 +1,25 @@
+id: cab-production
+projectId: cab
+environment: production
+adapter: compose
+rootPath: /srv/apps/nammacabs
+releaseRoot: /srv/apps/nammacabs/.central-cicd/releases
+currentPath: /srv/apps/nammacabs
+health:
+  type: none
+  timeoutMs: 10000
+runtime:
+  composeProject: nammacabs
+  composeWorkingDir: /srv/apps/nammacabs
+  composeFiles: /srv/apps/nammacabs/compose.yaml,/srv/apps/nammacabs/compose.prod.yaml
+  composeServices: web,backend,redis
+  builtServices: web,backend
+  healthServices: web,backend
+  containers: nammacabs-web-1,nammacabs-backend-1,nammacabs-redis-1
+  publicBindings: 127.0.0.1:8103->80
+  internalPorts: backend:3223,redis:6379
+  persistentMounts: /srv/apps/nammacabs/data/db:/data/db,/srv/apps/nammacabs/data/uploads:/app/uploads
+  preservePolicy: preserve-nammacabs-data-and-redis
+  deploymentStatus: disabled-compose-helper-not-production-installed
+  composeHealthPolicy: blocked-pending-verified-health-contract
+enabled: false

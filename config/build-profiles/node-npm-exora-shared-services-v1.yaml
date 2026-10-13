@@ -1,0 +1,8 @@
+id: node-npm-exora-shared-services-v1
+version: 1
+runtime: node
+lockfileRequired: false
+install: "true"
+test: "true"
+build: "rm -rf .central-cicd/release && mkdir -p .central-cicd/release && tar --exclude=.git --exclude=.central-cicd --exclude=node_modules --exclude='*/node_modules' --exclude=.env --exclude='.env.*' --exclude='*/.env' --exclude='*/.env.*' -cf - . | tar -C .central-cicd/release -xf -"
+artifactPath: .central-cicd/release

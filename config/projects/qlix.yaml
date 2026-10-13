@@ -1,0 +1,20 @@
+schemaVersion: 1
+project:
+  id: qlix
+  enabled: true
+  github:
+    owner: yeshwanth1127
+    repo: qlix
+    branch: master
+  build:
+    profile: node-npm-qlix-compose-source-v1
+    agentLabel: linux-build
+    testsRequired: false
+    timeoutMinutes: 90
+  deployment:
+    mode: manual
+    adapter: compose
+    targetId: qlix-production
+    environment: production
+  healthCheck:
+    type: none

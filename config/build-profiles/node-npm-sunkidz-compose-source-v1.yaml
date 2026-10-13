@@ -1,0 +1,8 @@
+id: node-npm-sunkidz-compose-source-v1
+version: 1
+runtime: node
+lockfileRequired: false
+install: "true"
+test: "true"
+build: "rm -rf .central-cicd/release && mkdir -p .central-cicd/release && tar --exclude=.git --exclude=.central-cicd --exclude=node_modules --exclude='*/node_modules' --exclude=.env --exclude='.env.*' --exclude='*/.env' --exclude='*/.env.*' --exclude=data --exclude='data/**' -cf - compose.yaml compose.prod.yaml sunkidz-web backend_sunkidz scripts | tar -C .central-cicd/release -xf -"
+artifactPath: .central-cicd/release

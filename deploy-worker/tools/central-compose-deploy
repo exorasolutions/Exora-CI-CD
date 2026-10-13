@@ -1,0 +1,575 @@
+#!/usr/bin/python3
+import hashlib
+import json
+import os
+import shutil
+import re
+import signal
+import subprocess
+import sys
+import tarfile
+import tempfile
+import time
+from pathlib import Path, PurePosixPath
+
+ARTIFACT_ROOT = Path("/opt/cicd/artifacts")
+WORK_ROOT = Path("/opt/cicd/work")
+STAGING_ROOT = WORK_ROOT / "compose-staging"
+LOCK_ROOT = Path("/run/lock/central-cicd-compose")
+MAX_FILES = 50000
+MAX_BYTES = 1024 * 1024 * 1024
+LIVE_COMPOSE_MUTATIONS_APPROVED = False
+
+# Docker API access is root-equivalent on the host. This helper must therefore
+# treat the policy file as untrusted input and enforce every approved target
+# contract independently of the Node worker.
+APPROVED_TARGETS = {
+    "cab-production": {
+        "projectId": "cab",
+        "targetRoot": "/srv/apps/nammacabs",
+        "composeProject": "nammacabs",
+        "composeWorkingDir": "/srv/apps/nammacabs",
+        "composeFiles": ["/srv/apps/nammacabs/compose.yaml", "/srv/apps/nammacabs/compose.prod.yaml"],
+        "composeServices": ["web", "backend", "redis"],
+        "builtServices": ["web", "backend"],
+        "healthServices": ["web", "backend"],
+        "containers": ["nammacabs-web-1", "nammacabs-backend-1", "nammacabs-redis-1"],
+        "publicBindings": "127.0.0.1:8103->80",
+        "internalPorts": "backend:3223,redis:6379",
+        "persistentMounts": "/srv/apps/nammacabs/data/db:/data/db,/srv/apps/nammacabs/data/uploads:/app/uploads",
+        "preservePolicy": "preserve-nammacabs-data-and-redis",
+    },
+    "exora-crm-production": {
+        "projectId": "exora-crm",
+        "targetRoot": "/srv/apps/exora_crm",
+        "composeProject": "exora-crm",
+        "composeWorkingDir": "/srv/apps/exora_crm",
+        "composeFiles": ["/srv/apps/exora_crm/compose.yaml", "/srv/apps/exora_crm/compose.prod.yaml"],
+        "composeServices": ["crm"],
+        "builtServices": ["crm"],
+        "healthServices": ["crm"],
+        "containers": ["exora-crm-crm-1"],
+        "publicBindings": "127.0.0.1:8106->3002",
+        "persistentMounts": "/srv/apps/exora_crm/data/logs:/app/logs,/var/www/Nomi/data:/nomi:ro",
+        "preservePolicy": "preserve-crm-data-and-nomi-readonly",
+    },
+    "exora-shared-services-production": {
+        "projectId": "exora-shared-services",
+        "targetRoot": "/srv/apps/shared",
+        "composeProject": "shared-services",
+        "composeWorkingDir": "/srv/apps/shared",
+        "composeFiles": ["/srv/apps/shared/compose.yaml", "/srv/apps/shared/compose.prod.yaml"],
+        "composeServices": ["whatsapp-qlix", "whatsapp-loomrun", "mcp-qlix", "mcp-gmail-loomrun"],
+        "builtServices": ["whatsapp-qlix", "whatsapp-loomrun", "mcp-qlix"],
+        "healthServices": ["whatsapp-qlix", "whatsapp-loomrun", "mcp-qlix"],
+        "containers": ["shared-services-mcp-qlix-1", "shared-services-whatsapp-qlix-1", "shared-services-whatsapp-loomrun-1"],
+        "publicBindings": "127.0.0.1:3940->3940,127.0.0.1:3939->3939,127.0.0.1:8090->8090",
+        "networks": "shared",
+        "persistentMounts": "/srv/apps/shared/data/whatsapp-qlix:/data,/srv/apps/shared/data/whatsapp-loomrun/auth_info:/app/auth_info,/srv/apps/shared/data/mcp-qlix:/data",
+        "preservePolicy": "preserve-whatsapp-auth-mcp-data-shared-network",
+        "sharedDeploymentPolicy": "explicit-shared-services-policy",
+    },
+    "loomrun-production": {
+        "projectId": "loomrun",
+        "targetRoot": "/srv/apps/loomrun",
+        "composeProject": "loomrun",
+        "composeWorkingDir": "/srv/apps/loomrun",
+        "composeFiles": ["/srv/apps/loomrun/compose.yaml", "/srv/apps/loomrun/compose.prod.yaml"],
+        "composeServices": ["web", "api", "redis"],
+        "builtServices": ["web", "api"],
+        "healthServices": ["web", "api"],
+        "containers": ["loomrun-web-1", "loomrun-api-1", "loomrun-redis-1"],
+        "publicBindings": "127.0.0.1:8107->80",
+        "internalPorts": "api:8002,redis:6379",
+        "networks": "loomrun_default,shared",
+        "persistentMounts": "/srv/apps/loomrun/.env:/app/.env:ro,/srv/apps/loomrun/data/storage:/loomrun-storage",
+        "preservePolicy": "preserve-storage-env-redis-shared-network",
+    },
+    "qlix-production": {
+        "projectId": "qlix",
+        "targetRoot": "/srv/apps/qlix",
+        "composeProject": "qlix",
+        "composeWorkingDir": "/srv/apps/qlix/deploy/server",
+        "composeFiles": ["/srv/apps/qlix/deploy/server/compose.yaml"],
+        "composeServices": ["backend", "frontend"],
+        "builtServices": ["backend", "frontend"],
+        "healthServices": ["backend", "frontend"],
+        "containers": ["qlix-backend-1", "qlix-frontend-1"],
+        "networkMode": "host",
+        "publicBindings": "127.0.0.1:4000,127.0.0.1:3000",
+        "persistentMounts": "/srv/apps/qlix/backend-adk/.env:/app/backend-adk/.env:ro,/srv/apps/qlix/deploy/server/data:/app-data,/tmp:/tmp",
+        "preservePolicy": "preserve-host-network-runner-provenance-secrets-ssh",
+    },
+    "sunkidz-production": {
+        "projectId": "sunkidz",
+        "targetRoot": "/srv/apps/sunkidz",
+        "composeProject": "sunkidz",
+        "composeWorkingDir": "/srv/apps/sunkidz",
+        "composeFiles": ["/srv/apps/sunkidz/compose.yaml", "/srv/apps/sunkidz/compose.prod.yaml"],
+        "composeServices": ["web", "api"],
+        "builtServices": ["web", "api"],
+        "healthServices": ["web", "api"],
+        "containers": ["sunkidz-web-1", "sunkidz-api-1"],
+        "publicBindings": "127.0.0.1:8101->80,127.0.0.1:8104->8001",
+        "persistentMounts": "/srv/apps/sunkidz/data/uploads:/app/uploads",
+        "preservePolicy": "preserve-uploads-web-api-routes",
+    },
+}
+
+
+def fail(message):
+    raise RuntimeError(message)
+
+
+def guard_live_mutation(command):
+    if not LIVE_COMPOSE_MUTATIONS_APPROVED:
+        fail(f"live compose {command} blocked pending verified candidate build-context mapping and health contracts")
+
+
+def run(args, cwd=None, capture=False, timeout=900):
+    result = subprocess.run(
+        args,
+        cwd=cwd,
+        text=True,
+        stdout=subprocess.PIPE if capture else None,
+        stderr=subprocess.PIPE if capture else None,
+        timeout=timeout,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or "").strip() if capture else ""
+        fail(f"{args[0]} failed" + (f": {detail}" if detail else ""))
+    return result.stdout.strip() if capture else ""
+
+
+def docker(args, capture=False):
+    return run(["docker", *args], capture=capture)
+
+
+def compose_args(policy, extra_files=None):
+    args = ["docker", "compose", "-p", policy["composeProject"]]
+    for file_name in [*policy["composeFiles"], *(extra_files or [])]:
+        args.extend(["-f", file_name])
+    return args
+
+
+def safe_id(value, label):
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", value):
+        fail(f"invalid {label}")
+
+
+def validate_policy_path(path_string):
+    original = Path(path_string)
+    if not original.is_absolute() or original.is_symlink():
+        fail("policy must be an absolute, non-symlink path")
+    root = WORK_ROOT.resolve(strict=True)
+    policy_path = original.resolve(strict=True)
+    if root not in policy_path.parents:
+        fail("policy is outside /opt/cicd/work")
+    if not policy_path.is_file():
+        fail("policy is not a regular file")
+    stat = policy_path.stat()
+    if stat.st_uid not in {0, os.getuid()}:
+        fail("policy owner is not approved")
+    if stat.st_mode & 0o077:
+        fail("policy file must not be accessible by group or other users")
+    return policy_path
+
+
+def load_policy(path_string):
+    policy_path = validate_policy_path(path_string)
+    policy = json.loads(policy_path.read_text())
+    if policy.get("schemaVersion") != 1:
+        fail("unsupported compose policy schema")
+    for key in [
+        "deploymentId", "releaseId", "projectId", "targetId", "environment",
+        "commitSha", "artifactPath", "artifactSha256", "targetRoot",
+        "composeProject", "composeWorkingDir", "composeFiles", "composeServices",
+        "builtServices", "healthServices", "containers", "persistentMounts",
+        "publicBindings", "preservePolicy", "deploymentStatus", "composeHealthPolicy"
+    ]:
+        if key not in policy:
+            fail(f"compose policy missing {key}")
+    safe_id(policy["deploymentId"], "deployment ID")
+    safe_id(policy["releaseId"], "release ID")
+    safe_id(policy["composeProject"], "compose project")
+    if policy["environment"] != "production":
+        fail("compose helper only supports production policies")
+    if not re.fullmatch(r"[a-f0-9]{40}", policy["commitSha"]):
+        fail("invalid commit SHA")
+    if not re.fullmatch(r"[a-f0-9]{64}", policy["artifactSha256"]):
+        fail("invalid artifact SHA-256")
+    for key in ["composeFiles", "composeServices", "builtServices", "healthServices"]:
+        if not isinstance(policy[key], list) or not policy[key]:
+            fail(f"compose policy {key} must be a non-empty list")
+    for service in policy["composeServices"]:
+        safe_id(service, "compose service")
+    for service in [*policy["builtServices"], *policy["healthServices"]]:
+        if service not in policy["composeServices"]:
+            fail(f"service is not approved for this target: {service}")
+    validate_approved_contract(policy)
+    target_root = Path(policy["targetRoot"])
+    workdir = Path(policy["composeWorkingDir"])
+    if not target_root.is_absolute() or not workdir.is_absolute():
+        fail("target root and compose workdir must be absolute")
+    if target_root.resolve(strict=False) not in [workdir.resolve(strict=False), *workdir.resolve(strict=False).parents]:
+        fail("compose workdir is outside target root")
+    for file_name in policy["composeFiles"]:
+        file_path = Path(file_name)
+        if not file_path.is_absolute():
+            fail("compose file must be absolute")
+        if target_root.resolve(strict=False) not in [file_path.resolve(strict=False), *file_path.resolve(strict=False).parents]:
+            fail("compose file is outside target root")
+    return policy_path, policy
+
+
+def validate_approved_contract(policy):
+    expected = APPROVED_TARGETS.get(policy.get("targetId"))
+    if not expected:
+        fail("unknown compose target")
+    for key in [
+        "projectId", "targetRoot", "composeProject", "composeWorkingDir",
+        "composeFiles", "composeServices", "builtServices", "healthServices",
+        "containers", "persistentMounts", "publicBindings", "preservePolicy"
+    ]:
+        if policy.get(key) != expected.get(key):
+            fail(f"compose policy violates approved contract: {key}")
+    for key in ["networks", "internalPorts", "networkMode", "sharedDeploymentPolicy"]:
+        if policy.get(key, "") != expected.get(key, ""):
+            fail(f"compose policy violates approved contract: {key}")
+    if policy.get("deploymentStatus") != "compose-helper-installed-and-staging-validated":
+        fail("compose target is not approved for live helper execution")
+    if policy.get("composeHealthPolicy") != "docker-healthcheck-required":
+        fail("compose target lacks approved docker health-check policy")
+
+
+def state_dir(policy):
+    path = Path(policy["targetRoot"]) / ".central-cicd" / "compose-state"
+    if path.exists() and path.is_symlink():
+        fail("compose state directory must not be a symlink")
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(path, 0o700)
+    return path
+
+
+def state_path(policy):
+    return state_dir(policy) / f"deployment-{policy['deploymentId']}.json"
+
+
+def write_state(policy, value):
+    directory = state_dir(policy)
+    fd, tmp = tempfile.mkstemp(prefix=".state-", dir=directory)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w") as stream:
+            json.dump(value, stream, indent=2)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(tmp, state_path(policy))
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+def stage_artifact(policy):
+    original = Path(policy["artifactPath"])
+    if not original.is_absolute() or original.is_symlink():
+        fail("artifact must be an absolute, non-symlink path")
+    root = ARTIFACT_ROOT.resolve(strict=True)
+    artifact = original.resolve(strict=True)
+    if root not in artifact.parents:
+        fail("artifact is outside /opt/cicd/artifacts")
+    if not artifact.is_file():
+        fail("artifact is not a regular file")
+    staging_root = STAGING_ROOT / policy["targetId"] / policy["deploymentId"]
+    if staging_root.exists() and staging_root.is_symlink():
+        fail("artifact staging directory must not be a symlink")
+    staging_root.mkdir(mode=0o700, parents=True, exist_ok=False)
+    os.chmod(staging_root, 0o700)
+    staged = staging_root / "artifact.tar.gz"
+    with artifact.open("rb") as source, staged.open("xb") as dest:
+        shutil.copyfileobj(source, dest, length=1024 * 1024)
+    os.chmod(staged, 0o600)
+    return staged
+
+
+def validate_artifact_copy(policy, artifact):
+    digest = hashlib.sha256()
+    with artifact.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    if digest.hexdigest().lower() != policy["artifactSha256"].lower():
+        fail("artifact SHA-256 mismatch")
+    return artifact
+
+
+def validate_archive(artifact):
+    total = 0
+    with tarfile.open(artifact, "r:gz") as archive:
+        members = archive.getmembers()
+        if not members or len(members) > MAX_FILES:
+            fail("archive is empty or contains too many entries")
+        seen = set()
+        for member in members:
+            raw = member.name
+            if not raw or raw.startswith("/") or "\\" in raw:
+                fail(f"unsafe archive path: {raw!r}")
+            parts = PurePosixPath(raw).parts
+            if not parts or ".." in parts or "\x00" in raw:
+                fail(f"unsafe archive path: {raw!r}")
+            normal = "/".join(parts)
+            if normal in seen:
+                fail(f"duplicate archive entry: {normal}")
+            seen.add(normal)
+            if not (member.isdir() or member.isfile()):
+                fail(f"unsupported archive entry type: {normal}")
+            if member.isfile():
+                total += member.size
+                if total > MAX_BYTES:
+                    fail("artifact exceeds size limit")
+
+
+def extract_artifact(policy, artifact):
+    releases = Path(policy["targetRoot"]) / ".central-cicd" / "compose-releases"
+    if releases.exists() and releases.is_symlink():
+        fail("compose release directory must not be a symlink")
+    releases.mkdir(mode=0o700, parents=True, exist_ok=True)
+    release = releases / policy["releaseId"]
+    if release.exists():
+        fail("release directory already exists")
+    release.mkdir(mode=0o700)
+    with tarfile.open(artifact, "r:gz") as archive:
+        for member in archive.getmembers():
+            destination = (release / member.name).resolve(strict=False)
+            if release.resolve(strict=True) not in [destination, *destination.parents]:
+                fail(f"archive entry escapes release directory: {member.name}")
+        archive.extractall(release)
+    return release
+
+
+def cleanup_staging(policy):
+    path = STAGING_ROOT / policy["targetId"] / policy["deploymentId"]
+    if path.exists() and not path.is_symlink():
+        shutil.rmtree(path)
+
+
+class TargetLock:
+    def __init__(self, target_id):
+        safe_id(target_id, "target ID")
+        self.target_id = target_id
+        self.path = LOCK_ROOT / f"{target_id}.lock"
+        self.fd = None
+
+    def __enter__(self):
+        import fcntl
+        LOCK_ROOT.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.chmod(LOCK_ROOT, 0o700)
+        self.fd = os.open(str(self.path), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        os.write(self.fd, str(os.getpid()).encode())
+        return self
+
+    def __exit__(self, _exc_type, _exc, _tb):
+        import fcntl
+        if self.fd is not None:
+            fcntl.flock(self.fd, fcntl.LOCK_UN)
+            os.close(self.fd)
+            self.fd = None
+
+
+def compose_config(policy, extra_files=None):
+    run([*compose_args(policy, extra_files), "config", "--quiet"], cwd=policy["composeWorkingDir"])
+
+
+def container_for_service(policy, service):
+    output = docker([
+        "ps", "-aq",
+        "--filter", f"label=com.docker.compose.project={policy['composeProject']}",
+        "--filter", f"label=com.docker.compose.service={service}",
+    ], capture=True)
+    ids = [line for line in output.splitlines() if line.strip()]
+    if len(ids) != 1:
+        fail(f"expected exactly one container for service {service}, found {len(ids)}")
+    return ids[0]
+
+
+def inspect_container(container_id):
+    return json.loads(docker(["inspect", container_id], capture=True))[0]
+
+
+def previous_images(policy):
+    images = {}
+    for service in policy["builtServices"]:
+        container = inspect_container(container_for_service(policy, service))
+        images[service] = {
+            "containerId": container["Id"],
+            "imageId": container["Image"],
+            "imageName": container.get("Config", {}).get("Image", ""),
+            "restartPolicy": container.get("HostConfig", {}).get("RestartPolicy", {}).get("Name", ""),
+            "networkMode": container.get("HostConfig", {}).get("NetworkMode", ""),
+            "mounts": container.get("Mounts", []),
+        }
+    return images
+
+
+def write_override(policy, images):
+    override = Path(policy["targetRoot"]) / ".central-cicd" / "compose-state" / f"override-{policy['releaseId']}.yaml"
+    lines = ["services:"]
+    for service, image in images.items():
+        safe_id(service, "service")
+        lines.extend([
+            f"  {service}:",
+            f"    image: {image}",
+        ])
+    override.write_text("\n".join(lines) + "\n")
+    os.chmod(override, 0o600)
+    return str(override)
+
+
+def release_images(policy):
+    return {
+        service: f"{policy['composeProject']}-{service}:cicd-{policy['commitSha'][:12]}-{policy['deploymentId']}"
+        for service in policy["builtServices"]
+    }
+
+
+def wait_services(policy, attempts=60):
+    for service in policy["healthServices"]:
+        container_id = container_for_service(policy, service)
+        for _ in range(attempts):
+            container = inspect_container(container_id)
+            state = container.get("State", {})
+            health = state.get("Health")
+            if health:
+                if health.get("Status") == "healthy":
+                    break
+            elif state.get("Running"):
+                break
+            time.sleep(2)
+        else:
+            fail(f"service did not become healthy: {service}")
+
+
+def deploy(policy_path):
+    _, policy = load_policy(policy_path)
+    with TargetLock(policy["targetId"]):
+        state_file = state_path(policy)
+        if state_file.exists():
+            fail("deployment ID already has a state record")
+        artifact = stage_artifact(policy)
+        try:
+            validate_artifact_copy(policy, artifact)
+            validate_archive(artifact)
+            compose_config(policy)
+            release = extract_artifact(policy, artifact)
+        finally:
+            cleanup_staging(policy)
+        fail("live compose deployment blocked pending verified candidate build-context mapping")
+    old_images = previous_images(policy)
+    new_images = release_images(policy)
+    override = write_override(policy, new_images)
+    compose_config(policy, [override])
+    state = {
+        "deploymentId": policy["deploymentId"],
+        "releaseId": policy["releaseId"],
+        "policyPath": str(Path(policy_path).resolve()),
+        "releasePath": str(release),
+        "overrideFile": override,
+        "oldImages": old_images,
+        "newImages": new_images,
+        "status": "prepared",
+    }
+    write_state(policy, state)
+    try:
+        for service in policy["builtServices"]:
+            run([*compose_args(policy, [override]), "build", service], cwd=policy["composeWorkingDir"], timeout=1800)
+        for service in policy["builtServices"]:
+            run([*compose_args(policy, [override]), "up", "-d", "--no-deps", service], cwd=policy["composeWorkingDir"], timeout=900)
+        wait_services(policy)
+        state["status"] = "deployed"
+        write_state(policy, state)
+        print(f"compose deployment {policy['deploymentId']} completed")
+    except Exception as deploy_error:
+        try:
+            rollback(policy_path, automatic=True)
+        except Exception as rollback_error:
+            fail(f"deployment failed ({deploy_error}); rollback also failed ({rollback_error})")
+        fail(f"deployment failed; previous images restored: {deploy_error}")
+
+
+def rollback(policy_path, automatic=False):
+    _, policy = load_policy(policy_path)
+    with TargetLock(policy["targetId"]):
+        state_file = state_path(policy)
+        if not state_file.is_file() or state_file.is_symlink():
+            fail("deployment state record not found")
+        state = json.loads(state_file.read_text())
+        if state.get("status") not in {"deployed", "prepared"}:
+            fail("deployment state is not rollbackable")
+        old_images = {}
+        report = {"services": {}}
+        for service, value in state["oldImages"].items():
+            image_id = value.get("imageId", "")
+            if not image_id.startswith("sha256:"):
+                fail(f"missing immutable previous image ID for {service}")
+            recovery_ref = f"{policy['composeProject']}-{service}:recovery-{policy['deploymentId']}"
+            run(["docker", "tag", image_id, recovery_ref], timeout=300)
+            resolved = docker(["image", "inspect", recovery_ref, "--format", "{{.Id}}"], capture=True)
+            if resolved != image_id:
+                fail(f"recovery image reference does not resolve to previous image for {service}")
+            old_images[service] = recovery_ref
+            report["services"][service] = {"previousImageId": image_id, "recoveryRef": recovery_ref}
+        override = write_override(policy, old_images)
+        try:
+            compose_config(policy, [override])
+            for service in policy["builtServices"]:
+                run([*compose_args(policy, [override]), "up", "-d", "--no-deps", service], cwd=policy["composeWorkingDir"], timeout=900)
+            wait_services(policy)
+            state["status"] = "rolled_back"
+            state["rollbackOverrideFile"] = override
+            state["rollbackReport"] = report
+            write_state(policy, state)
+            print(f"compose deployment {policy['deploymentId']} rolled back")
+        except Exception as error:
+            state["rollbackFailure"] = {"error": str(error), **report}
+            write_state(policy, state)
+            if automatic:
+                raise
+            fail(f"rollback failed: {error}")
+
+
+def validate_only(policy_path):
+    _, policy = load_policy(policy_path)
+    with TargetLock(policy["targetId"]):
+        artifact = stage_artifact(policy)
+        try:
+            validate_artifact_copy(policy, artifact)
+            validate_archive(artifact)
+            compose_config(policy)
+            for service in policy["builtServices"]:
+                container_for_service(policy, service)
+        finally:
+            cleanup_staging(policy)
+    print("PASS: compose policy, artifact, and current service selection validated.")
+
+
+def main():
+    if len(sys.argv) != 3 or sys.argv[1] not in {"validate", "deploy", "rollback"}:
+        fail("usage: central-compose-deploy validate|deploy|rollback POLICY_JSON")
+    command, policy_path = sys.argv[1], sys.argv[2]
+    if command == "validate":
+        validate_only(policy_path)
+    elif command == "deploy":
+        guard_live_mutation(command)
+        deploy(policy_path)
+    else:
+        guard_live_mutation(command)
+        rollback(policy_path)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as exc:
+        print(f"central-compose-deploy: {exc}", file=sys.stderr)
+        sys.exit(1)
