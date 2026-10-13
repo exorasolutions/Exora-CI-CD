@@ -17,7 +17,8 @@ export class JenkinsClient {
   }) {}
 
   async trigger(input: TriggerInput): Promise<{ queueUrl?: string }> {
-    const jobPath = `/job/${encodeURIComponent(this.cfg.jobName)}/buildWithParameters`;
+    const jobName = selectJenkinsJob(input.project, this.cfg.jobName);
+    const jobPath = `/job/${encodeURIComponent(jobName)}/buildWithParameters`;
     const url = new URL(jobPath, ensureSlash(this.cfg.baseUrl));
     const params: Record<string, string> = {
       PROJECT_ID: input.project.id,
@@ -50,3 +51,8 @@ export class JenkinsClient {
 }
 
 function ensureSlash(value: string) { return value.endsWith('/') ? value : `${value}/`; }
+
+/** Select a project-specific job when configured; otherwise preserve legacy routing. */
+export function selectJenkinsJob(project: Project, fallbackJobName: string): string {
+  return project.jenkinsJob ?? fallbackJobName;
+}

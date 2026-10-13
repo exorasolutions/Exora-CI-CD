@@ -200,7 +200,7 @@ private void enforceProjectDeploymentPolicy(Map cfg) {
 
 private Map loadBuildProfile(Map cfg) {
   def id = cfg.buildProfile as String
-  def allowed = ['node-npm-v1', 'node-pnpm-v1', 'python-v1', 'node-npm-exora-monorepo-v1']
+  def allowed = ['node-npm-v1', 'node-pnpm-v1', 'python-v1', 'node-npm-exora-monorepo-v1', 'node-npm-static-site-v1']
   if (!allowed.contains(id)) {
     error("Unknown centrally-approved build profile: ${id}")
   }
@@ -267,7 +267,8 @@ private void validateRuntimeProfileCombination(String profileId, String runtime)
     'node-npm-v1': 'node',
     'node-pnpm-v1': 'node',
     'python-v1': 'python',
-    'node-npm-exora-monorepo-v1': 'node'
+    'node-npm-exora-monorepo-v1': 'node',
+    'node-npm-static-site-v1': 'node'
   ]
   if (!expectedRuntimeByProfile.containsKey(profileId)) {
     error("Unsupported build profile: ${profileId}")
@@ -279,7 +280,7 @@ private void validateRuntimeProfileCombination(String profileId, String runtime)
 }
 
 private void validateMonorepoProfile(String profileId, Map profile) {
-  if (profileId != 'node-npm-exora-monorepo-v1') {
+  if (!['node-npm-exora-monorepo-v1', 'node-npm-static-site-v1'].contains(profileId)) {
     error("Monorepo profile is not approved for ${profileId}")
   }
   if (!(profile.packages instanceof List) || profile.packages.isEmpty()) {
@@ -348,7 +349,7 @@ private void validateApprovedMonorepoCommand(String command, boolean required) {
     if (required) error('Required monorepo command is missing')
     return
   }
-  if (!['npm ci', 'npm test', 'npm run build'].contains(command)) {
+  if (!['npm ci', 'npm test', 'npm run build', 'npm run lint'].contains(command)) {
     error("Unsupported monorepo command: ${command}")
   }
 }

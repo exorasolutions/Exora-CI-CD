@@ -1,0 +1,15 @@
+id: node-npm-static-site-v1
+version: 1
+runtime: node
+lockfileRequired: true
+monorepo: true
+artifactPath: .central-cicd/release
+packages:
+  - name: exora-static-site
+    workingDir: client
+    lockfile: package-lock.json
+    install: npm ci
+    test: npm run lint
+    build: npm run build
+    artifactPath: dist
+    artifactTarget: static-site

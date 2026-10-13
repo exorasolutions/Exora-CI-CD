@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import { Pool, PoolClient } from "pg";
 import { executeExoraProductionDeployment } from "./adapters/exora-production.js";
+import { executeExoraStaticDeployment } from "./adapters/exora-static.js";
 import { assertInside } from "./lib/artifact.js";
 import { validateLiveHealthPolicy } from "./lib/health-policy.js";
 
@@ -22,7 +23,7 @@ type Target = {
   id: string;
   projectId: string;
   environment: string;
-  adapter: "static" | "pm2" | "systemd" | "compose" | "exora-production";
+  adapter: "static" | "pm2" | "systemd" | "compose" | "exora-production" | "exora-static";
   targetPath: string;
   healthUrl?: string;
   healthExpectedStatus?: number;
@@ -144,6 +145,12 @@ app.post("/deploy", async (req, reply) => {
         request: { ...b, artifact: { ...b.artifact, path: artifactPath } },
         deploymentId: id,
         workRoot: deployWorkRoot
+      });
+    } else if (t.adapter === "exora-static") {
+      deployed = await executeExoraStaticDeployment({
+        target: t,
+        request: { ...b, artifact: { ...b.artifact, path: artifactPath } },
+        deploymentId: id
       });
     } else {
       throw new Error(`adapter is not enabled for execution: ${t.adapter}`);

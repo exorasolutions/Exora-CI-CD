@@ -1,0 +1,482 @@
+#!/usr/bin/python3
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import tarfile
+import tempfile
+import time
+import urllib.request
+import urllib.error
+from pathlib import Path, PurePosixPath
+
+ROOT = Path("/srv/apps/exora-website")
+STATE = ROOT / "state"
+ARTIFACT_ROOT = Path("/opt/cicd/artifacts")
+SITE_PREFIX = (".central-cicd", "release", "static-site")
+MAX_FILES = 20000
+MAX_BYTES = 300 * 1024 * 1024
+HEALTH_URL = "http://127.0.0.1:8110/"
+IMAGE_REPO = "exora-web"
+
+
+def fail(message):
+    raise RuntimeError(message)
+
+
+def docker(args, capture=False):
+    result = subprocess.run(
+        ["docker", *args],
+        text=True,
+        stdout=subprocess.PIPE if capture else None,
+        stderr=subprocess.PIPE if capture else None,
+        timeout=900,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or "").strip() if capture else ""
+        fail(f"docker {args[0]} failed" + (f": {detail}" if detail else ""))
+    return result.stdout.strip() if capture else ""
+
+
+def inspect_container(name):
+    try:
+        return json.loads(docker(["inspect", name], capture=True))[0]
+    except (RuntimeError, ValueError, IndexError):
+        return None
+
+
+def ensure_dirs():
+    apps = Path("/srv/apps")
+    if apps.is_symlink() or not apps.is_dir():
+        fail("/srv/apps must exist and must not be a symlink")
+
+    if ROOT.is_symlink():
+        fail("deployment root must not be a symlink")
+    if not ROOT.exists():
+        ROOT.mkdir(mode=0o750)
+
+    if ROOT.stat().st_uid != 0 or ROOT.stat().st_mode & 0o022:
+        fail("deployment root must be root-owned and not group/world writable")
+
+    if STATE.is_symlink():
+        fail("deployment state directory must not be a symlink")
+    STATE.mkdir(mode=0o700, exist_ok=True)
+    os.chown(STATE, 0, 0)
+    os.chmod(STATE, 0o700)
+
+
+def state_path(deployment_id):
+    if not re.fullmatch(r"[1-9][0-9]{0,17}", deployment_id):
+        fail("invalid deployment ID")
+    return STATE / f"deployment-{deployment_id}.json"
+
+
+def write_state(path, value):
+    fd, tmp = tempfile.mkstemp(prefix=".state-", dir=STATE)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w") as stream:
+            json.dump(value, stream, indent=2)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+def validate_artifact(path_string, expected_sha):
+    if not re.fullmatch(r"[a-fA-F0-9]{64}", expected_sha):
+        fail("invalid SHA-256 digest")
+
+    original = Path(path_string)
+    if not original.is_absolute() or original.is_symlink():
+        fail("artifact must be an absolute, non-symlink path")
+
+    root = ARTIFACT_ROOT.resolve(strict=True)
+    artifact = original.resolve(strict=True)
+    if root not in artifact.parents:
+        fail("artifact is outside /opt/cicd/artifacts")
+    if not artifact.is_file():
+        fail("artifact is not a regular file")
+
+    digest = hashlib.sha256()
+    with artifact.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    if digest.hexdigest().lower() != expected_sha.lower():
+        fail("artifact SHA-256 mismatch")
+    return artifact
+
+
+def extract_verified_site(artifact, context):
+    prefix = SITE_PREFIX
+    parents = {(".central-cicd",), (".central-cicd", "release")}
+    total = 0
+
+    with tarfile.open(artifact, "r:gz") as archive:
+        members = archive.getmembers()
+        if not members or len(members) > MAX_FILES:
+            fail("archive is empty or contains too many entries")
+
+        seen = set()
+        for member in members:
+            raw = member.name
+            if not raw or raw.startswith("/") or "\\" in raw:
+                fail(f"unsafe archive path: {raw!r}")
+
+            parts = PurePosixPath(raw).parts
+            if not parts or ".." in parts or "\x00" in raw:
+                fail(f"unsafe archive path: {raw!r}")
+            normal = "/".join(parts)
+            if normal in seen:
+                fail(f"duplicate archive entry: {normal}")
+            seen.add(normal)
+
+            if parts in parents:
+                if not member.isdir():
+                    fail(f"expected directory in archive: {normal}")
+                continue
+
+            if parts[:len(prefix)] != prefix:
+                fail(f"unexpected path in static-site artifact: {normal}")
+
+            if len(parts) == len(prefix):
+                if not member.isdir():
+                    fail("static-site archive root must be a directory")
+                continue
+
+            if not (member.isdir() or member.isfile()):
+                fail(f"unsupported archive entry type: {normal}")
+
+            if member.isfile():
+                total += member.size
+                if total > MAX_BYTES:
+                    fail("static-site artifact exceeds the size limit")
+
+        for member in members:
+            parts = PurePosixPath(member.name).parts
+            if parts in parents:
+                continue
+            if parts[:len(prefix)] != prefix:
+                fail(f"unexpected path in static-site artifact: {member.name}")
+
+            relative = parts[len(prefix):]
+            if not relative:
+                context.mkdir(mode=0o700, exist_ok=True)
+                continue
+
+            destination = context.joinpath(*relative)
+            if member.isdir():
+                destination.mkdir(mode=0o755, parents=True, exist_ok=True)
+                continue
+
+            destination.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+            source = archive.extractfile(member)
+            if source is None:
+                fail(f"cannot read archive entry: {member.name}")
+            with source, destination.open("xb") as output:
+                while True:
+                    data = source.read(1024 * 1024)
+                    if not data:
+                        break
+                    output.write(data)
+            os.chmod(destination, 0o644)
+
+    index = context / "dist" / "index.html"
+    if not index.is_file() or index.is_symlink() or index.stat().st_size == 0:
+        fail("artifact must contain dist/index.html")
+
+
+def write_build_files(context):
+    (context / "Dockerfile").write_text(
+        "FROM nginx:1.28-alpine\n"
+        "COPY nginx.conf /etc/nginx/conf.d/default.conf\n"
+        "COPY dist/ /usr/share/nginx/html/\n"
+    )
+    (context / "nginx.conf").write_text(
+        "server {\n"
+        "  listen 80;\n"
+        "  server_name _;\n"
+        "  root /usr/share/nginx/html;\n"
+        "  index index.html;\n"
+        "  location = /index.html { add_header Cache-Control \"no-cache\"; }\n"
+        "  location / { try_files $uri $uri/ /index.html; }\n"
+        "}\n"
+    )
+
+
+def http_healthy(url):
+    try:
+        request = urllib.request.Request(url, headers={"User-Agent": "exora-static-check"})
+        with urllib.request.urlopen(request, timeout=3) as response:
+            body = response.read(4096).lower()
+            return response.status == 200 and b"<html" in body
+    except Exception:
+        return False
+
+
+def wait_healthy(url=HEALTH_URL, attempts=30):
+    for _ in range(attempts):
+        if http_healthy(url):
+            return True
+        time.sleep(1)
+    return False
+
+
+def check_live_shape(container, require_old_image=False):
+    if not container:
+        fail("expected exora-web container was not found")
+    if container.get("Name") != "/exora-web":
+        fail("unexpected live container name")
+    if not container.get("State", {}).get("Running"):
+        fail("exora-web is not running")
+
+    cfg = container.get("Config", {})
+    host = container.get("HostConfig", {})
+    if require_old_image and not cfg.get("Image", "").startswith(IMAGE_REPO + ":"):
+        fail("live container image is not an exora-web tagged image")
+    if host.get("NetworkMode") != "bridge":
+        fail("unexpected network mode for exora-web")
+    if host.get("RestartPolicy", {}).get("Name") != "unless-stopped":
+        fail("unexpected restart policy for exora-web")
+    if host.get("Privileged") or host.get("Binds") or container.get("Mounts"):
+        fail("unexpected privileges or mounts on exora-web")
+
+    bindings = host.get("PortBindings") or {}
+    if set(bindings) != {"80/tcp"}:
+        fail("unexpected port bindings on exora-web")
+    if bindings["80/tcp"] != [{"HostIp": "127.0.0.1", "HostPort": "8110"}]:
+        fail("exora-web must bind only 127.0.0.1:8110 to container port 80")
+
+    return container["Image"]
+
+
+def start_live(image):
+    docker([
+        "run", "-d", "--name", "exora-web",
+        "--restart", "unless-stopped",
+        "-p", "127.0.0.1:8110:80",
+        "--label", "com.exora.central-cicd=static",
+        image,
+    ])
+
+
+def remove_live_if_image(allowed_images):
+    current = inspect_container("exora-web")
+    if current is None:
+        return
+    if current.get("Image") not in allowed_images:
+        fail("refusing to remove an unexpected exora-web container")
+    docker(["rm", "-f", "exora-web"])
+
+
+def restore_old(old_image, new_image):
+    current = inspect_container("exora-web")
+    if current is not None:
+        image = current.get("Image")
+        if image not in {old_image, new_image}:
+            fail("cannot restore: current container has an unexpected image")
+        if image == old_image and current.get("State", {}).get("Running") and wait_healthy():
+            return
+        remove_live_if_image({old_image, new_image})
+
+    start_live(old_image)
+    if not wait_healthy():
+        fail("old image was restarted but did not pass the HTTP health check")
+
+
+def deploy(artifact_arg, digest, commit, deployment_id):
+    if not re.fullmatch(r"[a-fA-F0-9]{40}", commit):
+        fail("invalid commit SHA")
+    ensure_dirs()
+    record = state_path(deployment_id)
+    if record.exists():
+        fail("deployment ID already has a state record")
+
+    artifact = validate_artifact(artifact_arg, digest)
+    live = inspect_container("exora-web")
+    old_image = check_live_shape(live, require_old_image=True)
+    commit = commit.lower()
+    tag = f"{IMAGE_REPO}:cicd-{commit[:12]}-{deployment_id}"
+    candidate = f"exora-web-candidate-{deployment_id}"
+
+    if inspect_container(candidate):
+        fail("candidate container name already exists")
+    try:
+        docker(["image", "inspect", tag], capture=True)
+    except RuntimeError:
+        pass
+    else:
+        fail("deployment image tag already exists; refusing to overwrite it")
+
+    with tempfile.TemporaryDirectory(prefix=".static-build-", dir=ROOT) as temp:
+        context = Path(temp)
+        extract_verified_site(artifact, context)
+        write_build_files(context)
+        docker(["build", "-t", tag, str(context)])
+        new_image = json.loads(docker(["image", "inspect", tag], capture=True))[0]["Id"]
+
+        docker([
+            "run", "-d", "--name", candidate,
+            "--restart", "no",
+            "-p", "127.0.0.1::80",
+            tag,
+        ])
+        try:
+            port_output = docker(["port", candidate, "80/tcp"], capture=True)
+            if not port_output.startswith("127.0.0.1:"):
+                fail("candidate container is not bound to loopback")
+            port = port_output.rsplit(":", 1)[1]
+            if not port.isdigit():
+                fail("invalid candidate host port")
+            if not wait_healthy(f"http://127.0.0.1:{port}/"):
+                fail("candidate image failed its HTTP health check")
+        finally:
+            if inspect_container(candidate):
+                docker(["rm", "-f", candidate])
+
+    state = {
+        "deploymentId": deployment_id,
+        "commitSha": commit,
+        "oldImage": old_image,
+        "newImage": new_image,
+        "imageTag": tag,
+        "status": "prepared",
+    }
+    write_state(record, state)
+
+    try:
+        docker(["stop", "--time", "20", "exora-web"])
+        docker(["rm", "exora-web"])
+        start_live(tag)
+        if not wait_healthy():
+            fail("new exora-web container failed its live health check")
+        state["status"] = "deployed"
+        write_state(record, state)
+        print(f"Exora static deployment {deployment_id} is healthy.")
+    except Exception as deployment_error:
+        try:
+            restore_old(old_image, new_image)
+            state["status"] = "rolled_back"
+            state["failure"] = str(deployment_error)
+            write_state(record, state)
+        except Exception as rollback_error:
+            fail(
+                f"deployment failed ({deployment_error}); "
+                f"automatic rollback also failed ({rollback_error})"
+            )
+        fail(f"deployment failed; previous image restored: {deployment_error}")
+
+
+def rollback(deployment_id):
+    ensure_dirs()
+    record = state_path(deployment_id)
+    if not record.is_file() or record.is_symlink():
+        fail("deployment state record not found")
+    state = json.loads(record.read_text())
+    if state.get("status") != "deployed":
+        fail("only a currently deployed release can be rolled back")
+
+    old_image = state["oldImage"]
+    new_image = state["newImage"]
+    current = inspect_container("exora-web")
+    check_live_shape(current)
+    if current["Image"] != new_image:
+        fail("current container no longer matches this deployment; refusing rollback")
+
+    remove_live_if_image({new_image})
+    try:
+        start_live(old_image)
+        if not wait_healthy():
+            fail("restored image failed its health check")
+    except Exception as rollback_error:
+        try:
+            remove_live_if_image({old_image, new_image})
+            start_live(new_image)
+            if not wait_healthy():
+                fail("new image also failed its recovery health check")
+        except Exception as recovery_error:
+            fail(f"rollback failed ({rollback_error}); recovery failed ({recovery_error})")
+        fail(f"rollback failed; new image restored: {rollback_error}")
+
+    state["status"] = "rolled_back"
+    write_state(record, state)
+    print(f"Exora static deployment {deployment_id} rolled back and is healthy.")
+
+
+
+def validate_only(artifact_arg, digest, commit, validation_id):
+    if not re.fullmatch(r"[a-fA-F0-9]{40}", commit):
+        fail("invalid commit SHA")
+    if not re.fullmatch(r"[1-9][0-9]{0,17}", validation_id):
+        fail("invalid validation ID")
+
+    ensure_dirs()
+    artifact = validate_artifact(artifact_arg, digest)
+    check_live_shape(inspect_container("exora-web"), require_old_image=True)
+
+    tag = f"{IMAGE_REPO}:validation-{commit[:12].lower()}-{validation_id}"
+    candidate = f"exora-web-validation-{validation_id}"
+
+    if inspect_container(candidate):
+        fail("validation candidate container already exists")
+    try:
+        docker(["image", "inspect", tag], capture=True)
+    except RuntimeError:
+        pass
+    else:
+        fail("validation image tag already exists")
+
+    image_created = False
+    try:
+        with tempfile.TemporaryDirectory(prefix=".static-validate-", dir=ROOT) as temp:
+            context = Path(temp)
+            extract_verified_site(artifact, context)
+            write_build_files(context)
+            docker(["build", "-t", tag, str(context)])
+            image_created = True
+
+            docker([
+                "run", "-d", "--name", candidate,
+                "--restart", "no",
+                "-p", "127.0.0.1::80",
+                tag,
+            ])
+
+            port_output = docker(["port", candidate, "80/tcp"], capture=True)
+            if not port_output.startswith("127.0.0.1:"):
+                fail("validation container is not bound to loopback")
+            port = port_output.rsplit(":", 1)[1]
+            if not port.isdigit():
+                fail("invalid validation container host port")
+            if not wait_healthy(f"http://127.0.0.1:{port}/"):
+                fail("validation container failed its HTTP health check")
+
+        print("PASS: candidate image passed its HTTP health check.")
+    finally:
+        if inspect_container(candidate):
+            docker(["rm", "-f", candidate])
+        if image_created:
+            docker(["image", "rm", tag])
+
+def main():
+    if len(sys.argv) == 6 and sys.argv[1] == "deploy":
+        deploy(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5])
+    elif len(sys.argv) == 6 and sys.argv[1] == "validate":
+        validate_only(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5])
+    elif len(sys.argv) == 3 and sys.argv[1] == "rollback":
+        rollback(sys.argv[2])
+    else:
+        fail("usage: exora-static-deploy validate ARTIFACT SHA256 COMMIT_SHA ID | deploy ARTIFACT SHA256 COMMIT_SHA ID | rollback ID")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as exc:
+        print(f"exora-static-deploy: {exc}", file=sys.stderr)
+        sys.exit(1)
