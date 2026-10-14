@@ -206,6 +206,7 @@ test("compose helper independently pins target contracts and fails closed before
   assert.match(helper, /APPROVED_TARGETS/);
   assert.match(helper, /compose policy violates approved contract/);
   assert.match(helper, /stage_artifact/);
+  assert.match(helper, /nested = wrapper \/ "release"/);
   assert.match(helper, /validate_artifact_copy/);
   assert.match(helper, /TargetLock/);
   assert.match(helper, /recovery-/);

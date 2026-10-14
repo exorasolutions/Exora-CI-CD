@@ -448,6 +448,20 @@ def prepare_build_contexts(policy, release):
     if release.is_symlink() or not release.is_dir():
         fail("candidate release directory is missing or unsafe")
 
+    # Jenkins archives the payload under .central-cicd/release/.
+    wrapper = release / ".central-cicd"
+    nested = wrapper / "release"
+    if wrapper.exists():
+        if wrapper.is_symlink() or not wrapper.is_dir():
+            fail("candidate artifact wrapper is unsafe")
+        if nested.is_symlink() or not nested.is_dir():
+            fail("candidate nested release directory is missing or unsafe")
+        resolved_root = release.resolve(strict=True)
+        resolved_nested = nested.resolve(strict=True)
+        if resolved_root not in resolved_nested.parents:
+            fail("candidate nested release escapes extraction root")
+        release = resolved_nested
+
     frontend = release / "frontend"
     backend = release / "backend"
     required_files = [
