@@ -141,6 +141,7 @@ test('trusted project branch and repository are resolved before application chec
   assert.match(pipeline, /Repository does not match trusted project configuration/);
   assert.match(pipeline, /Missing trusted project configuration/);
   assert.match(pipeline, /Invalid trusted project branch/);
+  assert.match(pipeline, /def repository = "https:\/\/github\.com\/\$\{github\.owner\}\/\$\{github\.repo\}\.git"\.toString\(\)/);
 });
 
 test('approval and worker handoff use the same resolved SHA', () => {

@@ -221,7 +221,7 @@ private Map loadTrustedProjectSource(Map cfg) {
   if (!(github instanceof Map) || !(github.owner instanceof String) || !(github.repo instanceof String) || !(github.branch instanceof String)) {
     error("Malformed trusted repository configuration for ${cfg.projectId}")
   }
-  def repository = "https://github.com/${github.owner}/${github.repo}.git"
+  def repository = "https://github.com/${github.owner}/${github.repo}.git".toString()
   requireRepositoryUrl(repository)
   validateBranchName(github.branch as String)
   if (cfg.repository instanceof String && cfg.repository.trim() &&
