@@ -20,6 +20,6 @@ runtime:
   internalPorts: backend:3223,redis:6379
   persistentMounts: /srv/apps/nammacabs/data/db:/data/db,/srv/apps/nammacabs/data/uploads:/app/uploads
   preservePolicy: preserve-nammacabs-data-and-redis
-  deploymentStatus: disabled-compose-helper-not-production-installed
-  composeHealthPolicy: blocked-pending-verified-health-contract
+  deploymentStatus: compose-helper-installed-and-staging-validated
+  composeHealthPolicy: docker-healthcheck-required
 enabled: false

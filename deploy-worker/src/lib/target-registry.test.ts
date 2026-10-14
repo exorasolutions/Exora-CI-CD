@@ -92,8 +92,8 @@ test("new production targets match verified VPS runtime paths and remain disable
     assert.equal(target.runtime.composeProject, want.composeProject);
     assert.equal(target.runtime.composeWorkingDir, want.composeWorkingDir);
     assert.equal(target.runtime.composeFiles, want.composeFiles);
-    assert.equal(target.runtime.deploymentStatus, "disabled-compose-helper-not-production-installed");
-    assert.equal(target.runtime.composeHealthPolicy, "blocked-pending-verified-health-contract");
+    assert.equal(target.runtime.deploymentStatus, target.id === 'cab-production' ? 'compose-helper-installed-and-staging-validated' : 'disabled-compose-helper-not-production-installed');
+    assert.equal(target.runtime.composeHealthPolicy, target.id === 'cab-production' ? 'docker-healthcheck-required' : 'blocked-pending-verified-health-contract');
   }
 });
 

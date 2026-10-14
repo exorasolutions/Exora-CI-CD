@@ -2,6 +2,7 @@ schemaVersion: 1
 project:
   id: cab
   enabled: true
+  jenkinsJob: cab-build
   github:
     owner: yeshwanth1127
     repo: cab
