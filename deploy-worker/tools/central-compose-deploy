@@ -171,10 +171,23 @@ def approved_live_targets():
     return enabled
 
 
-def guard_live_mutation(command, target_id):
-    if target_id not in LIVE_MUTATION_TARGETS:
+def guard_live_mutation(command, target_id=None):
+    # Reject targets outside the permitted deployment scope.
+    if target_id is not None and target_id not in LIVE_MUTATION_TARGETS:
         fail(f"live compose {command} is not permitted for target {target_id}")
-    if target_id not in approved_live_targets():
+
+    approved = approved_live_targets()
+    if not approved:
+        if command == "deploy":
+            # Safety invariant: live compose deployment blocked pending verified candidate build-context mapping.
+            fail("live compose deploy blocked pending verified candidate build-context mapping and health contracts")
+        fail(f"live compose {command} blocked pending verified candidate build-context mapping and health contracts")
+
+    # The dispatcher checks the gate before loading a policy. The mutation
+    # functions check the actual target again after the policy is loaded.
+    if target_id is None:
+        return
+    if target_id not in approved:
         fail(f"live compose {command} blocked; target {target_id} is not enabled in {LIVE_TARGETS_CONFIG}")
 
 
@@ -752,8 +765,10 @@ def main():
     if command == "validate":
         validate_only(policy_path)
     elif command == "deploy":
+        guard_live_mutation(command)
         deploy(policy_path)
     else:
+        guard_live_mutation(command)
         rollback(policy_path)
 
 

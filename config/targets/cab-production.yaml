@@ -3,7 +3,7 @@ projectId: cab
 environment: production
 adapter: compose
 rootPath: /srv/apps/nammacabs
-releaseRoot: /srv/apps/nammacabs/.central-cicd/releases
+releaseRoot: /srv/apps/nammacabs/.central-cicd/compose-releases
 currentPath: /srv/apps/nammacabs
 health:
   type: none
