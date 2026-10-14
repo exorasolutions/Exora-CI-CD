@@ -107,6 +107,49 @@ test('validates full 40-character commit SHA only', () => {
   assert.throws(() => validateCommitSha('g123456789abcdef0123456789abcdef01234567'), /invalid commit sha/);
 });
 
+test('allows blank commit input but resolves and pins the trusted branch HEAD', () => {
+  const pipeline = readFileSync(pipelinePath, 'utf8');
+  assert.match(pipeline, /stage\('Resolve application source'\)/);
+  assert.match(pipeline, /loadTrustedProjectSource\(cfg\)/);
+  assert.match(pipeline, /cfg\.commitSha = checkoutAndResolveCommit\(cfg, trustedSource\)/);
+  assert.match(pipeline, /def requestedCommitSha = \(cfg\.commitSha \?: ''\)\.trim\(\)/);
+  assert.match(pipeline, /def checkoutRef = requested \?\: "\*\/\$\{trustedSource\.branch\}"/);
+  assert.match(pipeline, /git rev-parse HEAD/);
+  assert.match(pipeline, /return actual/);
+});
+
+test('whitespace-only commit input is treated as blank', () => {
+  const pipeline = readFileSync(pipelinePath, 'utf8');
+  assert.match(pipeline, /def requestedCommitSha = \(cfg\.commitSha \?: ''\)\.trim\(\)/);
+  assert.match(pipeline, /def requested = \(cfg\.commitSha \?: ''\)\.trim\(\)/);
+  assert.match(pipeline, /def checkoutRef = requested \?\: "\*\/\$\{trustedSource\.branch\}"/);
+});
+
+test('explicit commit input remains exact and cannot fall back to a branch', () => {
+  const pipeline = readFileSync(pipelinePath, 'utf8');
+  assert.match(pipeline, /if \(requested && actual != requested\.toLowerCase\(\)\)/);
+  assert.match(pipeline, /Checkout mismatch: expected \$\{requested\}, got \$\{actual\}/);
+  assert.match(pipeline, /if \(requestedCommitSha && !\(requestedCommitSha ==~ \/\^\[0-9a-fA-F\]\{40\}\$\//);
+});
+
+test('trusted project branch and repository are resolved before application checkout', () => {
+  const pipeline = readFileSync(pipelinePath, 'utf8');
+  const sourceStage = pipeline.slice(pipeline.indexOf("stage('Resolve application source')"), pipeline.indexOf("stage('Load central build profile')"));
+  assert.match(sourceStage, /loadTrustedProjectSource\(cfg\)/);
+  assert.match(sourceStage, /cfg\.repository = trustedSource\.repository/);
+  assert.match(sourceStage, /cfg\.commitSha = checkoutAndResolveCommit\(cfg, trustedSource\)/);
+  assert.match(pipeline, /Repository does not match trusted project configuration/);
+  assert.match(pipeline, /Missing trusted project configuration/);
+  assert.match(pipeline, /Invalid trusted project branch/);
+});
+
+test('approval and worker handoff use the same resolved SHA', () => {
+  const pipeline = readFileSync(pipelinePath, 'utf8');
+  assert.match(pipeline, /Deploy \$\{cfg\.projectId\} @ \$\{cfg\.commitSha\}/);
+  assert.match(pipeline, /commitSha: cfg\.commitSha/);
+  assert.match(pipeline, /central-cicd result=.*sha=\$\{cfg\.commitSha\}/);
+});
+
 test('validates GitHub HTTPS repository URLs', () => {
   assert.doesNotThrow(() => validateRepositoryUrl('https://github.com/example/repo.git'));
   assert.doesNotThrow(() => validateRepositoryUrl('https://github.com/example/repo'));

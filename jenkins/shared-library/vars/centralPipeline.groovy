@@ -1,6 +1,7 @@
 def call(Map cfg = [:]) {
   validatePipelineConfig(cfg)
   def profile = [:]
+  def trustedSource = [:]
   def artifactName = "${cfg.projectId}-${env.BUILD_NUMBER}.tar.gz"
   validateArtifactName(artifactName)
   def deploymentEnabled = deploymentExecutionEnabled(cfg.projectId as String)
@@ -19,29 +20,21 @@ def call(Map cfg = [:]) {
       stage('Build on isolated agent') {
         agent { label cfg.agentLabel ?: 'linux-build' }
         stages {
-          stage('Load central build profile') {
+          stage('Resolve application source') {
             steps {
               script {
-                profile = loadBuildProfile(cfg)
+                trustedSource = loadTrustedProjectSource(cfg)
+                cfg.repository = trustedSource.repository
+                enforceProjectDeploymentPolicy(cfg)
+                cfg.commitSha = checkoutAndResolveCommit(cfg, trustedSource)
               }
             }
           }
 
-          stage('Checkout exact commit') {
+          stage('Load central build profile') {
             steps {
-              deleteDir()
-              checkout([
-                $class: 'GitSCM',
-                branches: [[name: cfg.commitSha]],
-                userRemoteConfigs: [appRepositoryRemoteConfig(cfg.repository as String)],
-                extensions: [[$class: 'CleanBeforeCheckout']]
-              ])
-              sh 'git rev-parse HEAD'
               script {
-                def actual = sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
-                if (actual != cfg.commitSha) {
-                  error("Checkout mismatch: expected ${cfg.commitSha}, got ${actual}")
-                }
+                profile = loadBuildProfile(cfg)
               }
             }
           }
@@ -165,8 +158,20 @@ def call(Map cfg = [:]) {
 
 private void validatePipelineConfig(Map cfg) {
   requireMatch('projectId', cfg.projectId, /^[a-z0-9][a-z0-9-]{1,62}$/)
-  requireRepositoryUrl(cfg.repository)
-  requireMatch('commitSha', cfg.commitSha, /^[0-9a-fA-F]{40}$/)
+  if (cfg.repository != null && !(cfg.repository instanceof String)) {
+    error("Invalid repository: ${cfg.repository}")
+  }
+  if (cfg.repository instanceof String && cfg.repository.trim()) {
+    requireRepositoryUrl(cfg.repository)
+  }
+  if (cfg.commitSha != null && !(cfg.commitSha instanceof String)) {
+    error("Invalid commitSha: ${cfg.commitSha}")
+  }
+  def requestedCommitSha = (cfg.commitSha ?: '').trim()
+  if (requestedCommitSha && !(requestedCommitSha ==~ /^[0-9a-fA-F]{40}$/)) {
+    error("Invalid commitSha: ${cfg.commitSha}")
+  }
+  cfg.commitSha = requestedCommitSha
   requireMatch('buildProfile', cfg.buildProfile, /^[a-z0-9][a-z0-9-]{1,63}$/)
   if (cfg.agentLabel) requireMatch('agentLabel', cfg.agentLabel, /^[A-Za-z0-9_.-]{1,64}$/)
   if (cfg.deployAgentLabel) requireMatch('deployAgentLabel', cfg.deployAgentLabel, /^[A-Za-z0-9_.-]{1,64}$/)
@@ -178,8 +183,90 @@ private void validatePipelineConfig(Map cfg) {
   enforceProjectDeploymentPolicy(cfg)
 }
 
+private Map loadTrustedProjectSource(Map cfg) {
+  def centralRepo = requireAdminEnv('CENTRAL_CICD_CONFIG_REPOSITORY')
+  def centralRef = requireAdminEnv('CENTRAL_CICD_CONFIG_REF')
+  requireCentralConfigRepositoryUrl(centralRepo)
+  requireMatch('centralConfigRef', centralRef, /^[0-9a-fA-F]{40}$/)
+
+  def configDir = ".central-cicd-project-${env.BUILD_TAG ?: env.BUILD_NUMBER}".replaceAll(/[^A-Za-z0-9_.-]/, '-')
+  def project
+  dir(configDir) {
+    deleteDir()
+    checkout([
+      $class: 'GitSCM',
+      branches: [[name: centralRef]],
+      userRemoteConfigs: [centralRepositoryRemoteConfig(centralRepo)],
+      extensions: [[$class: 'CleanBeforeCheckout']]
+    ])
+    def actual = sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+    if (actual != centralRef) {
+      error("Central project registry checkout mismatch: expected ${centralRef}, got ${actual}")
+    }
+    def projectFile = "config/projects/${cfg.projectId}.yaml"
+    if (!fileExists(projectFile)) {
+      error("Missing trusted project configuration: ${projectFile}")
+    }
+    def parsed = readYaml file: projectFile
+    if (!(parsed instanceof Map) || !(parsed.project instanceof Map)) {
+      error("Malformed trusted project configuration: ${projectFile}")
+    }
+    project = parsed.project
+  }
+
+  if (project.id != cfg.projectId) {
+    error("Trusted project id mismatch: expected ${cfg.projectId}, got ${project.id}")
+  }
+  def github = project.github
+  if (!(github instanceof Map) || !(github.owner instanceof String) || !(github.repo instanceof String) || !(github.branch instanceof String)) {
+    error("Malformed trusted repository configuration for ${cfg.projectId}")
+  }
+  def repository = "https://github.com/${github.owner}/${github.repo}.git"
+  requireRepositoryUrl(repository)
+  validateBranchName(github.branch as String)
+  if (cfg.repository instanceof String && cfg.repository.trim() &&
+      normaliseRepositoryUrl(cfg.repository as String) != normaliseRepositoryUrl(repository)) {
+    error("Repository does not match trusted project configuration for ${cfg.projectId}")
+  }
+  def trustedConfig = cfg.clone()
+  trustedConfig.repository = repository
+  enforceProjectDeploymentPolicy(trustedConfig)
+  return [repository: repository, branch: github.branch as String]
+}
+
+private String checkoutAndResolveCommit(Map cfg, Map trustedSource) {
+  def requested = (cfg.commitSha ?: '').trim()
+  def checkoutRef = requested ?: "*/${trustedSource.branch}"
+  deleteDir()
+  checkout([
+    $class: 'GitSCM',
+    branches: [[name: checkoutRef]],
+    userRemoteConfigs: [appRepositoryRemoteConfig(trustedSource.repository as String)],
+    extensions: [[$class: 'CleanBeforeCheckout']]
+  ])
+  def actual = sh(script: 'git rev-parse HEAD', returnStdout: true).trim().toLowerCase()
+  if (!(actual ==~ /^[0-9a-f]{40}$/)) {
+    error("Checkout did not resolve to a full commit SHA: ${actual}")
+  }
+  if (requested && actual != requested.toLowerCase()) {
+    error("Checkout mismatch: expected ${requested}, got ${actual}")
+  }
+  return actual
+}
+
+private void validateBranchName(String branch) {
+  if (!(branch ==~ /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,254}$/) || branch.contains('..') || branch.endsWith('.') || branch.endsWith('.lock') || branch.contains('@{')) {
+    error("Invalid trusted project branch: ${branch}")
+  }
+}
+
+private String normaliseRepositoryUrl(String value) {
+  return value.trim().replaceFirst(/\.git$/, '').toLowerCase()
+}
+
 private void enforceProjectDeploymentPolicy(Map cfg) {
   if (cfg.projectId == 'exora') {
+    if (!(cfg.repository instanceof String) || !cfg.repository.trim()) return
     if (!(cfg.repository ==~ /^https:\/\/github\.com\/yeshwanth1127\/exora(\.git)?$/)) {
       error("Invalid Exora repository: ${cfg.repository}")
     }
