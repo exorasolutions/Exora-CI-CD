@@ -183,14 +183,30 @@ private void enforceProjectDeploymentPolicy(Map cfg) {
     if (!(cfg.repository ==~ /^https:\/\/github\.com\/yeshwanth1127\/exora(\.git)?$/)) {
       error("Invalid Exora repository: ${cfg.repository}")
     }
-    if (cfg.buildProfile != 'node-npm-exora-monorepo-v1') {
+
+    def expectedTarget
+    def expectedAdapter
+
+    if (cfg.buildProfile == 'node-npm-static-site-v1') {
+      expectedTarget = 'exora-static'
+      expectedAdapter = 'exora-static'
+    } else if (cfg.buildProfile == 'node-npm-exora-monorepo-v1') {
+      expectedTarget = 'exora-production'
+      expectedAdapter = 'exora-production'
+    } else {
       error("Invalid Exora build profile: ${cfg.buildProfile}")
     }
-    if (cfg.targetId != 'exora-production') {
-      error("Invalid Exora deployment target: ${cfg.targetId}")
+
+    // Resolve missing values from the centrally approved profile mapping.
+    // Explicit, conflicting values are still rejected below.
+    if (!cfg.targetId) cfg.targetId = expectedTarget
+    if (!cfg.deploymentAdapter) cfg.deploymentAdapter = expectedAdapter
+
+    if (cfg.targetId != expectedTarget) {
+      error("Invalid Exora deployment target for ${cfg.buildProfile}: ${cfg.targetId}")
     }
-    if (cfg.deploymentAdapter != 'exora-production') {
-      error("Invalid Exora deployment adapter: ${cfg.deploymentAdapter}")
+    if (cfg.deploymentAdapter != expectedAdapter) {
+      error("Invalid Exora deployment adapter for ${cfg.buildProfile}: ${cfg.deploymentAdapter}")
     }
     if ((cfg.environment ?: 'production') != 'production') {
       error("Invalid Exora environment: ${cfg.environment}")
@@ -205,11 +221,14 @@ private Map loadBuildProfile(Map cfg) {
     'node-pnpm-v1',
     'python-v1',
     'node-npm-exora-monorepo-v1',
+    'node-npm-static-site-v1',
     'node-npm-cab-monorepo-v1',
     'node-npm-exora-crm-v1',
     'node-npm-exora-shared-services-v1',
+    'node-npm-loomrun-compose-source-v1',
     'node-npm-loomrun-web-v1',
     'node-npm-qlix-compose-source-v1',
+    'node-npm-sunkidz-compose-source-v1',
     'node-npm-sunkidz-web-v1'
   ]
   if (!allowed.contains(id)) {
@@ -279,11 +298,14 @@ private void validateRuntimeProfileCombination(String profileId, String runtime)
     'node-pnpm-v1': 'node',
     'python-v1': 'python',
     'node-npm-exora-monorepo-v1': 'node',
+    'node-npm-static-site-v1': 'node',
     'node-npm-cab-monorepo-v1': 'node',
     'node-npm-exora-crm-v1': 'node',
     'node-npm-exora-shared-services-v1': 'node',
+    'node-npm-loomrun-compose-source-v1': 'node',
     'node-npm-loomrun-web-v1': 'node',
     'node-npm-qlix-compose-source-v1': 'node',
+    'node-npm-sunkidz-compose-source-v1': 'node',
     'node-npm-sunkidz-web-v1': 'node'
   ]
   if (!expectedRuntimeByProfile.containsKey(profileId)) {
@@ -310,7 +332,7 @@ private void validateMonorepoProfile(String profileId, Map profile) {
       if (!pkg.containsKey(key)) error("Malformed build profile ${profileId}: package missing ${key}")
     }
     requireMatch('package.name', pkg.name, /^[a-z0-9][a-z0-9-]{0,63}$/)
-    if (profileId == 'node-npm-exora-monorepo-v1' &&
+    if (['node-npm-exora-monorepo-v1', 'node-npm-static-site-v1'].contains(profileId) &&
         ((pkg.workingDir as String).contains('exora-crm') || (pkg.artifactTarget as String).contains('crm'))) {
       error('exora-crm is not an approved deployment component')
     }

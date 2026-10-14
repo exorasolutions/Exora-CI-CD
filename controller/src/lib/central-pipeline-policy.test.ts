@@ -368,6 +368,8 @@ test('shared library pins Exora deployment parameters centrally', () => {
   assert.match(pipeline, /github\\.com\\\/yeshwanth1127\\\/exora/);
   assert.match(pipeline, /node-npm-exora-monorepo-v1/);
   assert.match(pipeline, /exora-production/);
+  assert.match(pipeline, /node-npm-static-site-v1/);
+  assert.match(pipeline, /exora-static/);
   assert.doesNotMatch(pipeline, /exora-crm.*targetId/s);
 });
 

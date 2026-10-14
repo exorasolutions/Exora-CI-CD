@@ -2,13 +2,23 @@ id: exora-crm-production
 projectId: exora-crm
 environment: production
 adapter: compose
-rootPath: /srv/apps/exora-crm
-releaseRoot: /srv/apps/exora-crm/.central-cicd/releases
-currentPath: /srv/apps/exora-crm/current
+rootPath: /srv/apps/exora_crm
+releaseRoot: /srv/apps/exora_crm/.central-cicd/releases
+currentPath: /srv/apps/exora_crm
 health:
   type: none
   timeoutMs: 10000
 runtime:
   composeProject: exora-crm
-  deploymentStatus: pending-production-inventory
+  composeWorkingDir: /srv/apps/exora_crm
+  composeFiles: /srv/apps/exora_crm/compose.yaml,/srv/apps/exora_crm/compose.prod.yaml
+  composeServices: crm
+  builtServices: crm
+  healthServices: crm
+  containers: exora-crm-crm-1
+  publicBindings: 127.0.0.1:8106->3002
+  persistentMounts: /srv/apps/exora_crm/data/logs:/app/logs,/var/www/Nomi/data:/nomi:ro
+  preservePolicy: preserve-crm-data-and-nomi-readonly
+  deploymentStatus: disabled-compose-helper-not-production-installed
+  composeHealthPolicy: blocked-pending-verified-health-contract
 enabled: false

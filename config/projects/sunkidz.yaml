@@ -7,14 +7,14 @@ project:
     repo: sunkidz
     branch: master
   build:
-    profile: node-npm-sunkidz-web-v1
+    profile: node-npm-sunkidz-compose-source-v1
     agentLabel: linux-build
     testsRequired: true
     timeoutMinutes: 45
   deployment:
     mode: manual
-    adapter: static
-    targetId: sunkidz-web-production
+    adapter: compose
+    targetId: sunkidz-production
     environment: production
   healthCheck:
     type: none

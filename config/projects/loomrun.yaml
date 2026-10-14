@@ -7,14 +7,14 @@ project:
     repo: loomrun
     branch: master
   build:
-    profile: node-npm-loomrun-web-v1
+    profile: node-npm-loomrun-compose-source-v1
     agentLabel: linux-build
     testsRequired: false
     timeoutMinutes: 45
   deployment:
     mode: manual
-    adapter: static
-    targetId: loomrun-web-production
+    adapter: compose
+    targetId: loomrun-production
     environment: production
   healthCheck:
     type: none

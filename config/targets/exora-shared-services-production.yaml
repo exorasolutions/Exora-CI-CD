@@ -2,14 +2,25 @@ id: exora-shared-services-production
 projectId: exora-shared-services
 environment: production
 adapter: compose
-rootPath: /srv/apps/exora-shared-services
-releaseRoot: /srv/apps/exora-shared-services/.central-cicd/releases
-currentPath: /srv/apps/exora-shared-services/current
+rootPath: /srv/apps/shared
+releaseRoot: /srv/apps/shared/.central-cicd/releases
+currentPath: /srv/apps/shared
 health:
   type: none
   timeoutMs: 10000
 runtime:
-  composeProject: exora-shared-services
-  composeFiles: compose.yaml,compose.prod.yaml
-  deploymentStatus: pending-production-inventory
+  composeProject: shared-services
+  composeWorkingDir: /srv/apps/shared
+  composeFiles: /srv/apps/shared/compose.yaml,/srv/apps/shared/compose.prod.yaml
+  composeServices: whatsapp-qlix,whatsapp-loomrun,mcp-qlix,mcp-gmail-loomrun
+  builtServices: whatsapp-qlix,whatsapp-loomrun,mcp-qlix
+  healthServices: whatsapp-qlix,whatsapp-loomrun,mcp-qlix
+  containers: shared-services-mcp-qlix-1,shared-services-whatsapp-qlix-1,shared-services-whatsapp-loomrun-1
+  publicBindings: 127.0.0.1:3940->3940,127.0.0.1:3939->3939,127.0.0.1:8090->8090
+  networks: shared
+  persistentMounts: /srv/apps/shared/data/whatsapp-qlix:/data,/srv/apps/shared/data/whatsapp-loomrun/auth_info:/app/auth_info,/srv/apps/shared/data/mcp-qlix:/data
+  sharedDeploymentPolicy: explicit-shared-services-policy
+  preservePolicy: preserve-whatsapp-auth-mcp-data-shared-network
+  deploymentStatus: disabled-compose-helper-not-production-installed
+  composeHealthPolicy: blocked-pending-verified-health-contract
 enabled: false

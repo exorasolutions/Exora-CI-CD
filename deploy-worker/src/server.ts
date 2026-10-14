@@ -2,9 +2,12 @@ import Fastify from "fastify";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import { Pool, PoolClient } from "pg";
+import { executeComposeDeployment } from "./adapters/compose.js";
 import { executeExoraProductionDeployment } from "./adapters/exora-production.js";
+import { executeExoraStaticDeployment } from "./adapters/exora-static.js";
 import { assertInside } from "./lib/artifact.js";
 import { validateLiveHealthPolicy } from "./lib/health-policy.js";
+import { loadTargets } from "./lib/target-registry.js";
 
 type DeployRequest = {
   schemaVersion: number;
@@ -22,7 +25,7 @@ type Target = {
   id: string;
   projectId: string;
   environment: string;
-  adapter: "static" | "pm2" | "systemd" | "compose" | "exora-production";
+  adapter: "static" | "pm2" | "systemd" | "compose" | "exora-production" | "exora-static";
   targetPath: string;
   healthUrl?: string;
   healthExpectedStatus?: number;
@@ -99,6 +102,7 @@ app.post("/deploy", async (req, reply) => {
 
   const client = await pool.connect();
   let locked = false;
+  let id: number | null = null;
   try {
     const t = await target(client, b.targetId);
     if (!t || (!t.enabled && b.dryRun !== true))
@@ -111,20 +115,23 @@ app.post("/deploy", async (req, reply) => {
     if (actual.toLowerCase() !== b.artifact.sha256.toLowerCase())
       return reply.code(409).send({ error: "artifact digest mismatch" });
 
-    await client.query("BEGIN");
-    locked = await lock(client, b.projectId, b.environment);
-    if (!locked) {
-      await client.query("ROLLBACK");
-      return reply.code(409).send({ error: "deployment already in progress" });
-    }
-
     const r = await client.query(
       `INSERT INTO deployments
        (project_id,environment,target_id,commit_sha,artifact_sha256,adapter,state,requested_by,jenkins_build)
        VALUES ($1,$2,$3,$4,$5,$6,'STARTED',$7,$8) RETURNING id`,
       [b.projectId,b.environment,b.targetId,b.commitSha,b.artifact.sha256,
        t.adapter,b.requestedBy,b.jenkinsBuild]);
-    const id = r.rows[0].id;
+    id = r.rows[0].id;
+
+    await client.query("BEGIN");
+    locked = await lock(client, b.projectId, b.environment);
+    if (!locked) {
+      await client.query("ROLLBACK");
+      await client.query(
+        "UPDATE deployments SET state='LOCK_BUSY', finished_at=now(), health_result=$2 WHERE id=$1",
+        [id, JSON.stringify({ stage: "lock", error: "deployment already in progress" })]);
+      return reply.code(409).send({ error: "deployment already in progress" });
+    }
 
     if (!executionEnabled || b.dryRun === true) {
       await client.query(
@@ -135,21 +142,53 @@ app.post("/deploy", async (req, reply) => {
       return { ok:true, state:"DRY_RUN", deploymentId:id, targetId:t.id };
     }
 
-    validateLiveHealthPolicy(t);
+    if (t.adapter !== "compose") {
+      validateLiveHealthPolicy(t);
+    }
+    if (id === null) throw new Error("deployment audit record was not created");
+    const deploymentId = id;
 
     let deployed: { rollback: () => Promise<void> } | null = null;
     if (t.adapter === "exora-production") {
       deployed = await executeExoraProductionDeployment({
         target: t,
         request: { ...b, artifact: { ...b.artifact, path: artifactPath } },
-        deploymentId: id,
+        deploymentId,
+        workRoot: deployWorkRoot
+      });
+    } else if (t.adapter === "exora-static") {
+      deployed = await executeExoraStaticDeployment({
+        target: t,
+        request: { ...b, artifact: { ...b.artifact, path: artifactPath } },
+        deploymentId
+      });
+    } else if (t.adapter === "compose") {
+      const configured = loadTargets().get(t.id);
+      if (!configured) throw new Error(`missing compose target configuration: ${t.id}`);
+      if (configured.adapter !== "compose") throw new Error(`configured target is not compose: ${t.id}`);
+      if (configured.rootPath !== t.targetPath) throw new Error(`compose target path mismatch: ${t.id}`);
+      deployed = await executeComposeDeployment({
+        target: {
+          id: t.id,
+          projectId: t.projectId,
+          environment: t.environment,
+          adapter: t.adapter,
+          targetPath: t.targetPath,
+          healthUrl: t.healthUrl,
+          healthExpectedStatus: t.healthExpectedStatus,
+          runtime: configured.runtime
+        },
+        request: { ...b, artifact: { ...b.artifact, path: artifactPath } },
+        deploymentId,
         workRoot: deployWorkRoot
       });
     } else {
       throw new Error(`adapter is not enabled for execution: ${t.adapter}`);
     }
 
-    const hc = await health(t);
+    const hc = t.adapter === "compose"
+      ? { ok: true, adapter: "compose-helper" }
+      : await health(t);
     const state = hc.ok ? "SUCCEEDED" : "HEALTH_FAILED";
     if (!hc.ok && deployed) await deployed.rollback();
     await client.query(
@@ -162,6 +201,14 @@ app.post("/deploy", async (req, reply) => {
     return { ok:hc.ok, state, deploymentId:id, health:hc };
   } catch (e) {
     try { await client.query("ROLLBACK"); } catch {}
+    if (id !== null) {
+      try {
+        await client.query(
+          "UPDATE deployments SET state='FAILED', finished_at=now(), health_result=$2 WHERE id=$1",
+          [id, JSON.stringify({ stage: "deploy", error: e instanceof Error ? e.message : String(e) })]
+        );
+      } catch {}
+    }
     req.log.error(e);
     return reply.code(500).send({error:"deployment processing failed"});
   } finally {

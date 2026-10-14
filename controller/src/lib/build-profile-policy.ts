@@ -5,11 +5,14 @@ export const approvedProfileIds = [
   'node-pnpm-v1',
   'python-v1',
   'node-npm-exora-monorepo-v1',
+  'node-npm-static-site-v1',
   'node-npm-cab-monorepo-v1',
   'node-npm-exora-crm-v1',
   'node-npm-exora-shared-services-v1',
+  'node-npm-loomrun-compose-source-v1',
   'node-npm-loomrun-web-v1',
   'node-npm-qlix-compose-source-v1',
+  'node-npm-sunkidz-compose-source-v1',
   'node-npm-sunkidz-web-v1'
 ] as const;
 export type ApprovedProfileId = typeof approvedProfileIds[number];
@@ -44,11 +47,14 @@ const runtimeByProfile: Record<ApprovedProfileId, BuildProfile['runtime']> = {
   'node-pnpm-v1': 'node',
   'python-v1': 'python',
   'node-npm-exora-monorepo-v1': 'node',
+  'node-npm-static-site-v1': 'node',
   'node-npm-cab-monorepo-v1': 'node',
   'node-npm-exora-crm-v1': 'node',
   'node-npm-exora-shared-services-v1': 'node',
+  'node-npm-loomrun-compose-source-v1': 'node',
   'node-npm-loomrun-web-v1': 'node',
   'node-npm-qlix-compose-source-v1': 'node',
+  'node-npm-sunkidz-compose-source-v1': 'node',
   'node-npm-sunkidz-web-v1': 'node'
 };
 
@@ -155,7 +161,8 @@ function validateMonorepoProfile(expectedId: string, profile: Record<string, unk
     const workingDir = String(pkg.workingDir);
     const artifactTarget = String(pkg.artifactTarget);
     if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(packageName)) throw new Error('invalid package name');
-    if (expectedId === 'node-npm-exora-monorepo-v1' && (workingDir.includes('exora-crm') || artifactTarget.includes('crm'))) {
+    if (['node-npm-exora-monorepo-v1', 'node-npm-static-site-v1'].includes(expectedId) &&
+        (workingDir.includes('exora-crm') || artifactTarget.includes('crm'))) {
       throw new Error('exora-crm is not an approved deployment component');
     }
     if (names.has(packageName)) throw new Error(`Duplicate monorepo package name: ${packageName}`);

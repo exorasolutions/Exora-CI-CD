@@ -1,46 +1,78 @@
 # Existing Application Inventory
 
-This inventory was prepared from the local workspace on 2026-10-13. No production VPS SSH inspection was available in this run, so container names, live paths, gateway routes, health URLs, systemd units, PM2 processes, and deployed checkouts are marked unknown unless local repository files provided evidence. All newly added deployment targets remain disabled.
+This inventory reconciles local repository inspection with read-only Docker, `/srv/apps`, gateway, systemd, and deploy-worker environment output from the production VPS. Secret values were not captured. Production remains unchanged: no containers, files, gateway routes, services, databases, targets, or deployment flags were modified.
 
-| Application | Repository | Branch | Components | Runtime and package manager | Install / test / build / package | Deployment evidence | Central project | Target | Build | Dry run | Future deployment | Unknowns and risks |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| exora | yeshwanth1127/exora | master | `exora-mern/client`, `exora-mern/server` in existing central profile | Node/npm | Existing `node-npm-exora-monorepo-v1`: `npm ci`; client `npm run build`; server `npm test`; package allowlisted client/server output | Existing target `/var/www/exora`, PM2 `exora-api`, health `http://127.0.0.1:5555/health` | `exora` | `exora-production` | Supported by existing profile, but local checkout currently lacks `exora-mern/server/package.json` evidence | Dry run supported | Only existing `exora-production` adapter is wired for live execution; target disabled | Verify current source tree and production checkout before any future deployment |
-| cab | yeshwanth1127/cab | master | `backend`, `frontend` | Node/npm with per-component `package-lock.json` | `backend`: `npm ci`, `npm run build`; `frontend`: `npm ci`, `npm run build`; package backend allowlist and frontend `build` | Local Dockerfiles found; no live deployment evidence | `cab` | `cab-production` | Supported | Supported while central execution remains disabled | Disabled until production compose/service identity is verified and adapter execution is implemented | Live directory, ports, compose file, health URL, data volumes unknown |
-| exora-crm | rvamsi201-vk/exora_crm | prasad_changes | Node CRM API plus local Postgres compose | Node/npm root `package-lock.json` | `npm ci`, `npm test`, `npm run check`; package allowlisted API/source files | `docker-compose.yml` defines local Postgres only; app runtime likely Node/PM2 or external compose, unconfirmed | `exora-crm` | `exora-crm-production` | Supported | Supported while central execution remains disabled | Disabled; requires production runtime confirmation and owner credential mapping | Live app process, app port, gateway route, database/env handling unknown |
-| exora-shared-services | yeshwanth1127/exora-shared-services | main | `whatsapp-qlix`, `whatsapp-loomrun`, `mcp-qlix`, `mcp-gmail-loomrun` | Mixed Node/npm and Python; Compose source bundle | Source bundle profile packages compose inputs while excluding `.git`, env files, and `node_modules` | `compose.prod.yaml` references localhost-only ports `3939`, `8090`, `3940`, `8003` and existing Loomrun paths | `exora-shared-services` | `exora-shared-services-production` | Source packaging supported | Supported while central execution remains disabled | Disabled; compose execution adapter is not wired for live deployment | Need production compose root, env files, volumes, service identities, and health checks |
-| loomrun | yeshwanth1127/loomrun | master | `apps/web` | Node/npm component `package-lock.json` | `apps/web`: `npm ci`, `npm run build`; package `dist` | `apps/api` exists but has no package manifest in local checkout; no live deployment evidence | `loomrun` | `loomrun-web-production` | Web build supported | Supported while central execution remains disabled | Static target disabled until live route/root is verified | API runtime, app root, ports, gateway route, storage paths unknown |
-| qlix | yeshwanth1127/qlix | master | Compose app: backend, frontend, WhatsApp, MCP, Postgres, Redis | Mixed Node/npm packages; Docker Compose source bundle | Source bundle profile packages `Dockerfile`, `docker-compose.yml`, `backend-adk`, `frontend`, `packages`, `qlix-mcp-service`, `qlix-whatsapp-service` while excluding env files and `node_modules` | `docker-compose.yml` exposes configurable host ports for frontend `3000`, API `4000`, WhatsApp `3939`, MCP `3940`; persistent volumes for Postgres and WhatsApp | `qlix` | `qlix-production` | Source packaging supported | Supported while central execution remains disabled | Disabled; safe compose deployment and rollback not implemented | Production paths, env file location, port conflicts, gateway route, image tagging, and health URL unknown |
-| sunkidz | yeshwanth1127/sunkidz | master | `sunkidz-web` | Node/npm component `package-lock.json` | `npm ci`, `npm run lint`, `npm run build`; package `dist` | Web Dockerfile found; no live deployment evidence | `sunkidz` | `sunkidz-web-production` | Supported | Supported while central execution remains disabled | Static target disabled until live route/root is verified | Backend/runtime not present as package manifest; live path, gateway route, health unknown |
+Deployment safety was verified from `/opt/central-cicd-worker/deploy-worker/.env`: `DEPLOY_EXECUTION_ENABLED=false`. The central controller and worker systemd units are running. Every additional target introduced by this preparation remains disabled.
+
+## Readiness Definitions
+
+- Build readiness: the central Jenkins profile can produce an artifact or source bundle from repository files.
+- Dry-run readiness: the project and target YAML load through the runtime schemas and can be selected without enabling live deployment.
+- Deployment readiness: the deploy worker has a tested live adapter, health policy, rollback path, installed restricted helper where needed, target enabled by approval, and staging/prod validation for the verified runtime. `exora-static` and the historical `exora-production` adapter have existing live execution paths. The Compose helper now independently validates target contracts, stages artifacts, and locks per target, but live Compose mutation remains blocked until candidate build-context mapping and health contracts are validated for each app.
+
+## Confirmed Application Inventory
+
+| Application | Repository | Branch | Central project -> target | Build profile | Verified production runtime | Readiness | Remaining deployment work |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Exora static website | `yeshwanth1127/exora` | `master` | `exora` -> `exora-static` | `node-npm-static-site-v1` | Container `exora-web`, image `exora-web:static-staging`, healthy, `127.0.0.1:8110->80`, root `/srv/apps/exora-website`, gateway `exora.solutions` proxies to `127.0.0.1:8110` | Build: ready. Dry run: ready. Deployment: adapter exists, target disabled. | Keep target disabled until separate approval. Preserve current loopback binding and gateway route. |
+| Exora MERN/API legacy target | `yeshwanth1127/exora` | `master` | `exora` -> `exora-production` | `node-npm-exora-monorepo-v1` | Historical target `/var/www/exora`; gateway output still shows older root `/var/www/exora/exora-mern/client/dist`; Docker shows exited `exora-api-test` in `/srv/apps/exora-api` using `/srv/apps/exora-api/compose.yaml` | Build: profile exists but local source evidence is incomplete. Dry run: ready. Deployment: adapter exists, target disabled. | Treat as historical/legacy until separately reviewed. Do not confuse it with the active static public site. |
+| Namma Cabs / cab | `yeshwanth1127/cab` | `master` | `cab` -> `cab-production` | `node-npm-cab-monorepo-v1` | Compose project `nammacabs` at `/srv/apps/nammacabs`, files `/srv/apps/nammacabs/compose.yaml,/srv/apps/nammacabs/compose.prod.yaml`; containers `nammacabs-web-1`, `nammacabs-backend-1`, `nammacabs-redis-1`; web binding `127.0.0.1:8103->80`; backend internal `3223/tcp`; data mounts under `/srv/apps/nammacabs/data` | Build: ready. Dry run: ready. Deployment: adapter code ready, target disabled, helper not production-installed or validated. | Install/review restricted helper, run staging validation, then approve target enablement separately. Preserve data mounts, redis, backend, web, and gateway route. |
+| Exora CRM | `rvamsi201-vk/exora_crm` | `prasad_changes` | `exora-crm` -> `exora-crm-production` | `node-npm-exora-crm-v1` | Compose project `exora-crm` at `/srv/apps/exora_crm`, files `/srv/apps/exora_crm/compose.yaml,/srv/apps/exora_crm/compose.prod.yaml`; container `exora-crm-crm-1`, `127.0.0.1:8106->3002`; mounts `/srv/apps/exora_crm/data/logs` and `/var/www/Nomi/data:ro`; gateway `crm.exora.solutions` proxies to `8106` and `/health` | Build: ready. Dry run: ready. Deployment: adapter code ready, target disabled, helper not production-installed or validated. | Configure owner credential `CENTRAL_CICD_APP_GITHUB_CREDENTIALS_ID_RVAMSI201_VK`; install/review restricted helper and validate rollback without touching CRM data or Nomi mount. |
+| Shared services | `yeshwanth1127/exora-shared-services` | `main` | `exora-shared-services` -> `exora-shared-services-production` | `node-npm-exora-shared-services-v1` | Compose project `shared-services` at `/srv/apps/shared`, files `/srv/apps/shared/compose.yaml,/srv/apps/shared/compose.prod.yaml`; services observed from local compose and Docker output: `whatsapp-qlix`, `whatsapp-loomrun`, `mcp-qlix`, optional `mcp-gmail-loomrun`; bindings `3939`, `8090`, `3940`; network `shared`; data under `/srv/apps/shared/data` | Build: source bundle ready. Dry run: ready. Deployment: adapter code ready, target disabled, helper not production-installed or validated. | Validate shared-service policy before approval; preserve shared network, WhatsApp auth state, MCP data, `/tmp` read-only mount, and Loomrun storage read-only mount. |
+| Loomrun | `yeshwanth1127/loomrun` | `master` | `loomrun` -> `loomrun-production` | `node-npm-loomrun-compose-source-v1` | Compose project `loomrun` at `/srv/apps/loomrun`, files `/srv/apps/loomrun/compose.yaml,/srv/apps/loomrun/compose.prod.yaml`; services verified from local compose and Docker output: `web`, `api`, `redis`; web binding `127.0.0.1:8107->80`; API internal `8002/tcp`; mounts `/srv/apps/loomrun/.env:ro`, `/srv/apps/loomrun/data/storage`; network `shared` | Build: source bundle ready. Dry run: ready. Deployment: adapter code ready, target disabled, helper not production-installed or validated. | Install/review restricted helper and validate service-aware rollback preserving API, Redis, storage, `.env`, and shared network. |
+| Qlix | `yeshwanth1127/qlix` | `master` | `qlix` -> `qlix-production` | `node-npm-qlix-compose-source-v1` | Compose project `qlix` at `/srv/apps/qlix/deploy/server`, file `/srv/apps/qlix/deploy/server/compose.yaml`; services `backend`, `frontend`; both use host networking; gateway routes API to `127.0.0.1:4000` and frontend to `127.0.0.1:3000`; mounts include env, runner data, provenance, backend data, secrets, `/tmp`, and SSH read-only material | Build: source bundle ready. Dry run: ready. Deployment: adapter code ready, target disabled, helper not production-installed or validated. | Install/review restricted helper and validate host-network rollback preserving exact workdir, env/secrets mounts, runner state, and gateway assumptions. |
+| Sunkidz | `yeshwanth1127/sunkidz` | `master` | `sunkidz` -> `sunkidz-production` | `node-npm-sunkidz-compose-source-v1` | Compose project `sunkidz` at `/srv/apps/sunkidz`, files `/srv/apps/sunkidz/compose.yaml,/srv/apps/sunkidz/compose.prod.yaml`; services verified from local compose and Docker output: `web`, `api`; web binding `127.0.0.1:8101->80`; API binding `127.0.0.1:8104->8001`; upload mount `/srv/apps/sunkidz/data/uploads` | Build: source bundle ready. Dry run: ready. Deployment: adapter code ready, target disabled, helper not production-installed or validated. | Install/review restricted helper and validate service-aware rollback preserving API, uploads, web/API routes, and health behavior. |
+
+## Additional Deployed Applications Not Yet Configured
+
+| Application | Verified runtime |
+| --- | --- |
+| `nomi` | Container `nomi`, compose project `nomi`, root `/srv/apps/nomi`, `127.0.0.1:3002->3000`, upload mount `/srv/apps/nomi/data/uploads`; gateway output has older and newer proxy entries for `nomi.exora.solutions`. |
+| `sona` | Compose project `sona`, root `/srv/apps/sona`, container `sona-web-1`, `127.0.0.1:8105->3100`, upload mount `/srv/apps/sona/data/uploads`; gateway `sona.exora.solutions` proxies to `8105`. |
+| `package-registry` | Compose project `package-registry`, root `/srv/apps/package-registry`, container `package-registry-registry-1`, `127.0.0.1:8102->8080`, packages and htpasswd mounts; gateway `packages.exora.solutions` proxies to `8102`. |
+| `gateway` | Compose project `gateway`, root `/srv/gateway`, host network, read-only `/srv/gateway/nginx` and certificate mounts. The gateway must not be restarted by app deployments. |
+| Jenkins/build infrastructure | `central-jenkins` at `/opt/jenkins`, `central-cicd-agent`, artifact mount `/opt/cicd/artifacts`; systemd services `central-cicd-controller.service` and `central-cicd-worker.service` are active. |
+
+## Corrected Target Configuration Summary
+
+| Target | Adapter | Root | Compose workdir/files | Status |
+| --- | --- | --- | --- | --- |
+| `exora-static` | `exora-static` | `/srv/apps/exora-website` | not Compose | Disabled; live adapter implemented and tested. |
+| `exora-production` | `exora-production` | `/var/www/exora` | not Compose | Disabled; historical MERN adapter implemented but target needs separate review. |
+| `cab-production` | `compose` | `/srv/apps/nammacabs` | `/srv/apps/nammacabs`; `compose.yaml,compose.prod.yaml` | Disabled; Compose adapter code implemented and unit-tested, helper not production-installed or approved. |
+| `exora-crm-production` | `compose` | `/srv/apps/exora_crm` | `/srv/apps/exora_crm`; `compose.yaml,compose.prod.yaml` | Disabled; Compose adapter code implemented and unit-tested, helper not production-installed or approved. |
+| `exora-shared-services-production` | `compose` | `/srv/apps/shared` | `/srv/apps/shared`; `compose.yaml,compose.prod.yaml` | Disabled; Compose adapter code implemented and unit-tested, helper not production-installed or approved. |
+| `loomrun-production` | `compose` | `/srv/apps/loomrun` | `/srv/apps/loomrun`; `compose.yaml,compose.prod.yaml` | Disabled; Compose adapter code implemented and unit-tested, helper not production-installed or approved. |
+| `qlix-production` | `compose` | `/srv/apps/qlix` | `/srv/apps/qlix/deploy/server`; `compose.yaml` | Disabled; Compose adapter code implemented and unit-tested, helper not production-installed or approved. |
+| `sunkidz-production` | `compose` | `/srv/apps/sunkidz` | `/srv/apps/sunkidz`; `compose.yaml,compose.prod.yaml` | Disabled; Compose adapter code implemented and unit-tested, helper not production-installed or approved. |
+
+## Supported Compose Adapter Contract
+
+The worker accepts only approved target IDs, repositories, production roots, compose working directories, compose files, compose project names, and service allowlists recorded in target YAML. It writes a deployment policy under the worker work root and invokes only the restricted `central-compose-deploy` helper through `sudo -n`. Artifact tar metadata is validated before helper dispatch; links, traversal, absolute paths, and unsafe entries are rejected.
+
+The helper contract supports `validate`, `deploy`, and `rollback`; independently pinned target contracts; private artifact staging; per-target locking; immutable recovery references; `docker compose config --quiet`; and fail-closed rollback reporting. Live `docker compose build` and `docker compose up -d --no-deps` remain blocked until candidate build contexts and app-level health contracts are proven for each target. It intentionally avoids `docker compose down`, broad pruning, wildcard container deletion, gateway restarts, database migrations, and volume deletion.
 
 ## Jenkins Job Mapping
 
-Use the existing centralized Jenkins shared library job template. Application repositories do not need Jenkinsfiles or GitHub Actions workflows.
+Application repositories do not need Jenkinsfiles or GitHub Actions workflows. The Exora static project uses the tested `exora-static` job override. Additional jobs should remain build/dry-run oriented until their adapters are implemented and tested.
 
 | Jenkins job | Project ID | Repository | Build profile | Target |
 | --- | --- | --- | --- | --- |
-| `central-cicd-exora` | `exora` | `yeshwanth1127/exora` | `node-npm-exora-monorepo-v1` | `exora-production` |
+| `exora-static` | `exora` | `yeshwanth1127/exora` | `node-npm-static-site-v1` | `exora-static` |
+| `central-cicd-exora-mern` or legacy fallback | `exora` | `yeshwanth1127/exora` | `node-npm-exora-monorepo-v1` | `exora-production` |
 | `central-cicd-cab` | `cab` | `yeshwanth1127/cab` | `node-npm-cab-monorepo-v1` | `cab-production` |
 | `central-cicd-exora-crm` | `exora-crm` | `rvamsi201-vk/exora_crm` | `node-npm-exora-crm-v1` | `exora-crm-production` |
 | `central-cicd-exora-shared-services` | `exora-shared-services` | `yeshwanth1127/exora-shared-services` | `node-npm-exora-shared-services-v1` | `exora-shared-services-production` |
-| `central-cicd-loomrun` | `loomrun` | `yeshwanth1127/loomrun` | `node-npm-loomrun-web-v1` | `loomrun-web-production` |
+| `central-cicd-loomrun` | `loomrun` | `yeshwanth1127/loomrun` | `node-npm-loomrun-compose-source-v1` | `loomrun-production` |
 | `central-cicd-qlix` | `qlix` | `yeshwanth1127/qlix` | `node-npm-qlix-compose-source-v1` | `qlix-production` |
-| `central-cicd-sunkidz` | `sunkidz` | `yeshwanth1127/sunkidz` | `node-npm-sunkidz-web-v1` | `sunkidz-web-production` |
+| `central-cicd-sunkidz` | `sunkidz` | `yeshwanth1127/sunkidz` | `node-npm-sunkidz-compose-source-v1` | `sunkidz-production` |
 
-## Operator Checklist For Another Repository
+## Operator Checklist For Production Approval
 
-1. Confirm the local Git root, remote owner/repository, deployment branch, package manager, lockfile, build scripts, Docker/Compose files, and current production runtime.
-2. Confirm the live deployment root, service/container/process identity, persistent volumes, env-file locations, gateway upstream, port bindings, and health endpoint without printing secrets.
-3. Add one `config/projects/<project-id>.yaml` file with the actual GitHub owner, repository, branch, approved build profile, Jenkins job mapping, and deployment target.
-4. Add one disabled `config/targets/<target-id>.yaml` file using `/srv/apps/<app-name>` for new targets unless the app already lives elsewhere.
-5. Reuse an existing build profile only when the install, test, build, and artifact paths match exactly. Otherwise add a new centrally approved profile and tests.
-6. Keep deployment execution disabled until the adapter is implemented, tested, and reviewed against the real production runtime.
-7. Configure owner-specific Jenkins credentials through administrator-managed environment variables only.
-8. Run controller and deploy-worker tests, TypeScript builds, YAML validation, and `git diff --check`.
-
-## Remaining Manual Steps
-
-- Perform read-only VPS inventory for `/srv/apps`, Docker containers, Compose projects, systemd/PM2 processes, gateway upstreams, ports, health endpoints, and existing deployment audit records.
-- Create or update Jenkins jobs from the central job template and map each job to exactly one project ID.
-- Set `CENTRAL_CICD_APP_GITHUB_CREDENTIALS_ID_RVAMSI201_VK` if `exora-crm` remains under `rvamsi201-vk`.
-- Implement and test live `compose` and static deployment execution before enabling any new target.
-- Keep `DEPLOY_EXECUTION_ENABLED` / `CENTRAL_CICD_DEPLOYMENT_EXECUTION_ENABLED` false until a separate production approval.
+1. Prove the extracted candidate artifact layout and Docker build context for every built service before removing the helper's fail-closed live-deploy block.
+2. Define verified app-level or Docker health contracts for every Compose target; running status alone is not enough.
+3. Review and install the restricted Compose helper with the intended sudoers boundary only after the first two items pass in staging.
+4. Preserve env files, secrets, uploads, runner data, Redis/Postgres volumes, shared networks, host-network assumptions, and app-specific data mounts.
+5. Keep every new target disabled until staging or validation-only production checks cover deploy, health failure, rollback, disabled target dry-run behavior, and wrong-service protection.
+6. Keep `DEPLOY_EXECUTION_ENABLED=false` and central Jenkins deployment execution disabled until a separate production approval.
+7. Configure `CENTRAL_CICD_APP_GITHUB_CREDENTIALS_ID_RVAMSI201_VK` before `exora-crm` checkout is expected to work in Jenkins.
