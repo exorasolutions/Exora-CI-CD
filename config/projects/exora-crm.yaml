@@ -1,0 +1,20 @@
+schemaVersion: 1
+project:
+  id: exora-crm
+  enabled: true
+  github:
+    owner: rvamsi201-vk
+    repo: exora_crm
+    branch: prasad_changes
+  build:
+    profile: node-npm-exora-crm-v1
+    agentLabel: linux-build
+    testsRequired: true
+    timeoutMinutes: 45
+  deployment:
+    mode: manual
+    adapter: compose
+    targetId: exora-crm-production
+    environment: production
+  healthCheck:
+    type: none

@@ -200,7 +200,18 @@ private void enforceProjectDeploymentPolicy(Map cfg) {
 
 private Map loadBuildProfile(Map cfg) {
   def id = cfg.buildProfile as String
-  def allowed = ['node-npm-v1', 'node-pnpm-v1', 'python-v1', 'node-npm-exora-monorepo-v1']
+  def allowed = [
+    'node-npm-v1',
+    'node-pnpm-v1',
+    'python-v1',
+    'node-npm-exora-monorepo-v1',
+    'node-npm-cab-monorepo-v1',
+    'node-npm-exora-crm-v1',
+    'node-npm-exora-shared-services-v1',
+    'node-npm-loomrun-web-v1',
+    'node-npm-qlix-compose-source-v1',
+    'node-npm-sunkidz-web-v1'
+  ]
   if (!allowed.contains(id)) {
     error("Unknown centrally-approved build profile: ${id}")
   }
@@ -267,7 +278,13 @@ private void validateRuntimeProfileCombination(String profileId, String runtime)
     'node-npm-v1': 'node',
     'node-pnpm-v1': 'node',
     'python-v1': 'python',
-    'node-npm-exora-monorepo-v1': 'node'
+    'node-npm-exora-monorepo-v1': 'node',
+    'node-npm-cab-monorepo-v1': 'node',
+    'node-npm-exora-crm-v1': 'node',
+    'node-npm-exora-shared-services-v1': 'node',
+    'node-npm-loomrun-web-v1': 'node',
+    'node-npm-qlix-compose-source-v1': 'node',
+    'node-npm-sunkidz-web-v1': 'node'
   ]
   if (!expectedRuntimeByProfile.containsKey(profileId)) {
     error("Unsupported build profile: ${profileId}")
@@ -279,7 +296,7 @@ private void validateRuntimeProfileCombination(String profileId, String runtime)
 }
 
 private void validateMonorepoProfile(String profileId, Map profile) {
-  if (profileId != 'node-npm-exora-monorepo-v1') {
+  if (!profileId.startsWith('node-npm-')) {
     error("Monorepo profile is not approved for ${profileId}")
   }
   if (!(profile.packages instanceof List) || profile.packages.isEmpty()) {
@@ -293,7 +310,8 @@ private void validateMonorepoProfile(String profileId, Map profile) {
       if (!pkg.containsKey(key)) error("Malformed build profile ${profileId}: package missing ${key}")
     }
     requireMatch('package.name', pkg.name, /^[a-z0-9][a-z0-9-]{0,63}$/)
-    if ((pkg.workingDir as String).contains('exora-crm') || (pkg.artifactTarget as String).contains('crm')) {
+    if (profileId == 'node-npm-exora-monorepo-v1' &&
+        ((pkg.workingDir as String).contains('exora-crm') || (pkg.artifactTarget as String).contains('crm'))) {
       error('exora-crm is not an approved deployment component')
     }
     if (names.contains(pkg.name as String)) {
@@ -348,7 +366,7 @@ private void validateApprovedMonorepoCommand(String command, boolean required) {
     if (required) error('Required monorepo command is missing')
     return
   }
-  if (!['npm ci', 'npm test', 'npm run build'].contains(command)) {
+  if (!['npm ci', 'npm test', 'npm run build', 'npm run check', 'npm run lint'].contains(command)) {
     error("Unsupported monorepo command: ${command}")
   }
 }
@@ -569,10 +587,14 @@ private Map centralRepositoryRemoteConfig(String url) {
 
 private Map appRepositoryRemoteConfig(String url) {
   def owner = githubOwner(url)
-  if (owner != 'yeshwanth1127') {
-    error("Unsupported application repository owner: ${owner}. Only yeshwanth1127 repositories are approved for this job.")
+  def credentialEnvByOwner = [
+    'yeshwanth1127': 'CENTRAL_CICD_APP_GITHUB_CREDENTIALS_ID_YESHWANTH1127',
+    'rvamsi201-vk': 'CENTRAL_CICD_APP_GITHUB_CREDENTIALS_ID_RVAMSI201_VK'
+  ]
+  if (!credentialEnvByOwner.containsKey(owner)) {
+    error("Unsupported application repository owner: ${owner}. Add an administrator-managed credential mapping before enabling this repository.")
   }
-  return gitRemoteConfig(url, optionalCredentialId('CENTRAL_CICD_APP_GITHUB_CREDENTIALS_ID_YESHWANTH1127'))
+  return gitRemoteConfig(url, optionalCredentialId(credentialEnvByOwner.get(owner) as String))
 }
 
 private Map gitRemoteConfig(String url, String credentialsId) {
@@ -623,6 +645,9 @@ private String adminEnvValue(String name) {
   }
   if (name == 'CENTRAL_CICD_APP_GITHUB_CREDENTIALS_ID_YESHWANTH1127') {
     return env.CENTRAL_CICD_APP_GITHUB_CREDENTIALS_ID_YESHWANTH1127
+  }
+  if (name == 'CENTRAL_CICD_APP_GITHUB_CREDENTIALS_ID_RVAMSI201_VK') {
+    return env.CENTRAL_CICD_APP_GITHUB_CREDENTIALS_ID_RVAMSI201_VK
   }
   if (name == 'CENTRAL_CICD_DEPLOY_ARTIFACT_STAGING_ROOT') {
     return env.CENTRAL_CICD_DEPLOY_ARTIFACT_STAGING_ROOT

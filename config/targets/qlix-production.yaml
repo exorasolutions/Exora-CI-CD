@@ -1,0 +1,15 @@
+id: qlix-production
+projectId: qlix
+environment: production
+adapter: compose
+rootPath: /srv/apps/qlix
+releaseRoot: /srv/apps/qlix/.central-cicd/releases
+currentPath: /srv/apps/qlix/current
+health:
+  type: none
+  timeoutMs: 10000
+runtime:
+  composeProject: qlix
+  composeFile: docker-compose.yml
+  deploymentStatus: pending-production-inventory
+enabled: false

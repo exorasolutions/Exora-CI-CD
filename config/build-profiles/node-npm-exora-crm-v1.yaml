@@ -1,0 +1,29 @@
+id: node-npm-exora-crm-v1
+version: 1
+runtime: node
+lockfileRequired: true
+monorepo: true
+artifactPath: .central-cicd/release
+packages:
+  - name: exora-crm-api
+    workingDir: .
+    lockfile: package-lock.json
+    install: npm ci
+    test: npm test
+    build: npm run check
+    artifactTarget: exora-crm-api
+    artifactIncludes:
+      - package.json
+      - package-lock.json
+      - server.js
+      - lead-scraper.js
+      - lead-scorer.js
+      - ecosystem.config.js
+      - docker-compose.yml
+      - index.html
+      - logo.png
+      - lib
+      - migrations
+      - scripts
+      - test
+      - exora_crm

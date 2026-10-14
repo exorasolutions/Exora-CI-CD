@@ -1,0 +1,14 @@
+id: loomrun-web-production
+projectId: loomrun
+environment: production
+adapter: static
+rootPath: /srv/apps/loomrun
+releaseRoot: /srv/apps/loomrun/.central-cicd/releases
+currentPath: /srv/apps/loomrun/current
+health:
+  type: none
+  timeoutMs: 10000
+runtime:
+  component: apps/web
+  deploymentStatus: pending-production-inventory
+enabled: false

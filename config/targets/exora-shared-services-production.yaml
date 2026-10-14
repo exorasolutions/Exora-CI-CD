@@ -1,0 +1,15 @@
+id: exora-shared-services-production
+projectId: exora-shared-services
+environment: production
+adapter: compose
+rootPath: /srv/apps/exora-shared-services
+releaseRoot: /srv/apps/exora-shared-services/.central-cicd/releases
+currentPath: /srv/apps/exora-shared-services/current
+health:
+  type: none
+  timeoutMs: 10000
+runtime:
+  composeProject: exora-shared-services
+  composeFiles: compose.yaml,compose.prod.yaml
+  deploymentStatus: pending-production-inventory
+enabled: false

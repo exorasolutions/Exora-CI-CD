@@ -1,0 +1,20 @@
+schemaVersion: 1
+project:
+  id: loomrun
+  enabled: true
+  github:
+    owner: yeshwanth1127
+    repo: loomrun
+    branch: master
+  build:
+    profile: node-npm-loomrun-web-v1
+    agentLabel: linux-build
+    testsRequired: false
+    timeoutMinutes: 45
+  deployment:
+    mode: manual
+    adapter: static
+    targetId: loomrun-web-production
+    environment: production
+  healthCheck:
+    type: none

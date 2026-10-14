@@ -1,0 +1,20 @@
+schemaVersion: 1
+project:
+  id: exora-shared-services
+  enabled: true
+  github:
+    owner: yeshwanth1127
+    repo: exora-shared-services
+    branch: main
+  build:
+    profile: node-npm-exora-shared-services-v1
+    agentLabel: linux-build
+    testsRequired: false
+    timeoutMinutes: 45
+  deployment:
+    mode: manual
+    adapter: compose
+    targetId: exora-shared-services-production
+    environment: production
+  healthCheck:
+    type: none

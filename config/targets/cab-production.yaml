@@ -1,0 +1,14 @@
+id: cab-production
+projectId: cab
+environment: production
+adapter: compose
+rootPath: /srv/apps/cab
+releaseRoot: /srv/apps/cab/.central-cicd/releases
+currentPath: /srv/apps/cab/current
+health:
+  type: none
+  timeoutMs: 10000
+runtime:
+  composeProject: cab
+  deploymentStatus: pending-production-inventory
+enabled: false

@@ -1,0 +1,14 @@
+id: exora-crm-production
+projectId: exora-crm
+environment: production
+adapter: compose
+rootPath: /srv/apps/exora-crm
+releaseRoot: /srv/apps/exora-crm/.central-cicd/releases
+currentPath: /srv/apps/exora-crm/current
+health:
+  type: none
+  timeoutMs: 10000
+runtime:
+  composeProject: exora-crm
+  deploymentStatus: pending-production-inventory
+enabled: false
