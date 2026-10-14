@@ -249,6 +249,7 @@ function runHelper(command: string): { stderr: string; dockerInvoked: boolean } 
   const bin = path.join(dir, "bin");
   mkdirSync(bin);
   const dockerLog = path.join(dir, "docker.log");
+  const python = process.platform === "win32" ? "python" : "python3";
   const fakeDocker = path.join(bin, process.platform === "win32" ? "docker.cmd" : "docker");
   writeFileSync(
     fakeDocker,
@@ -259,7 +260,7 @@ function runHelper(command: string): { stderr: string; dockerInvoked: boolean } 
   if (process.platform !== "win32") chmodSync(fakeDocker, 0o700);
 
   try {
-    execFileSync("python", ["tools/central-compose-deploy", command, path.join(dir, "policy.json")], {
+    execFileSync(python, ["tools/central-compose-deploy", command, path.join(dir, "policy.json")], {
       cwd: path.resolve("."),
       env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}` },
       encoding: "utf8",
@@ -267,9 +268,10 @@ function runHelper(command: string): { stderr: string; dockerInvoked: boolean } 
     });
     assert.fail(`helper ${command} unexpectedly succeeded`);
   } catch (error) {
-    const stderr = error instanceof Error && "stderr" in error
-      ? String((error as Error & { stderr?: unknown }).stderr)
-      : String(error);
+    const processError = error as Error & { stderr?: unknown };
+    const stderr = processError.stderr == null
+      ? processError.message
+      : String(processError.stderr);
     return { stderr, dockerInvoked: existsSync(dockerLog) };
   } finally {
     rmSync(dir, { recursive: true, force: true });
