@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import pwd
 import shutil
 import re
 import signal
@@ -170,7 +171,11 @@ def validate_policy_path(path_string):
     if not policy_path.is_file():
         fail("policy is not a regular file")
     stat = policy_path.stat()
-    if stat.st_uid not in {0, os.getuid()}:
+    try:
+        worker_uid = pwd.getpwnam("prasad").pw_uid
+    except KeyError:
+        worker_uid = -1
+    if stat.st_uid not in {0, os.getuid(), worker_uid}:
         fail("policy owner is not approved")
     if stat.st_mode & 0o077:
         fail("policy file must not be accessible by group or other users")
