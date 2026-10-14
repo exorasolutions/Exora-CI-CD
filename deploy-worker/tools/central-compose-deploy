@@ -4,6 +4,7 @@ import json
 import os
 import pwd
 import shutil
+import stat
 import re
 import signal
 import subprocess
@@ -19,9 +20,10 @@ STAGING_ROOT = WORK_ROOT / "compose-staging"
 LOCK_ROOT = Path("/run/lock/central-cicd-compose")
 MAX_FILES = 50000
 MAX_BYTES = 1024 * 1024 * 1024
-LIVE_COMPOSE_MUTATIONS_APPROVED = False
-# CAB is the only candidate build-context mapping in this phase.
+# Maximum scope for live Compose mutation in this deployment phase.
+# Actual permission requires a separate root-owned opt-in file.
 LIVE_MUTATION_TARGETS = {"cab-production"}
+LIVE_TARGETS_CONFIG = Path("/etc/central-cicd/compose-live-targets")
 
 # Docker API access is root-equivalent on the host. This helper must therefore
 # treat the policy file as untrusted input and enforce every approved target
@@ -124,9 +126,56 @@ def fail(message):
     raise RuntimeError(message)
 
 
-def guard_live_mutation(command):
-    if not LIVE_COMPOSE_MUTATIONS_APPROVED:
-        fail(f"live compose {command} blocked pending verified candidate build-context mapping and health contracts")
+def approved_live_targets():
+    # Fail closed: absent configuration means no live mutation is authorized.
+    config_dir = LIVE_TARGETS_CONFIG.parent
+    try:
+        dir_info = config_dir.lstat()
+    except FileNotFoundError:
+        return set()
+    except OSError:
+        fail("cannot inspect root-owned live-target configuration directory")
+
+    if (stat.S_ISLNK(dir_info.st_mode) or
+            not stat.S_ISDIR(dir_info.st_mode) or
+            dir_info.st_uid != 0 or
+            (stat.S_IMODE(dir_info.st_mode) & 0o022)):
+        fail("live-target configuration directory must be a root-owned, non-writable-by-others directory")
+
+    try:
+        info = LIVE_TARGETS_CONFIG.lstat()
+    except FileNotFoundError:
+        return set()
+    except OSError:
+        fail("cannot inspect live-target configuration")
+
+    if (stat.S_ISLNK(info.st_mode) or
+            not stat.S_ISREG(info.st_mode) or
+            info.st_uid != 0 or
+            stat.S_IMODE(info.st_mode) != 0o600):
+        fail("live-target configuration must be a root-owned regular file with mode 0600")
+
+    try:
+        lines = LIVE_TARGETS_CONFIG.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError):
+        fail("cannot read live-target configuration")
+
+    enabled = set()
+    for line_number, raw in enumerate(lines, 1):
+        value = raw.strip()
+        if not value or value.startswith("#"):
+            continue
+        if value not in LIVE_MUTATION_TARGETS:
+            fail(f"live-target configuration contains an unauthorized target on line {line_number}")
+        enabled.add(value)
+    return enabled
+
+
+def guard_live_mutation(command, target_id):
+    if target_id not in LIVE_MUTATION_TARGETS:
+        fail(f"live compose {command} is not permitted for target {target_id}")
+    if target_id not in approved_live_targets():
+        fail(f"live compose {command} blocked; target {target_id} is not enabled in {LIVE_TARGETS_CONFIG}")
 
 
 def run(args, cwd=None, capture=False, timeout=900):
@@ -562,12 +611,9 @@ def wait_services(policy, attempts=60):
             fail(f"service did not become healthy before timeout: {service}")
 
 def deploy(policy_path):
-    # Defense-in-depth even if dispatch is changed accidentally later.
-    if not LIVE_COMPOSE_MUTATIONS_APPROVED:
-        fail("live compose deployment blocked pending verified candidate build-context mapping")
+    # Enforce the root-owned target gate inside the mutation function.
     _, policy = load_policy(policy_path)
-    if policy["targetId"] not in LIVE_MUTATION_TARGETS:
-        fail(f"live compose deployment is not enabled for target {policy['targetId']}")
+    guard_live_mutation("deploy", policy["targetId"])
 
     with TargetLock(policy["targetId"]):
         state_file = state_path(policy)
@@ -679,11 +725,8 @@ def rollback_locked(policy, automatic=False):
 
 
 def rollback(policy_path, automatic=False):
-    if not LIVE_COMPOSE_MUTATIONS_APPROVED:
-        fail("live compose rollback blocked pending verified candidate build-context mapping and health contracts")
     _, policy = load_policy(policy_path)
-    if policy["targetId"] not in LIVE_MUTATION_TARGETS:
-        fail(f"live compose rollback is not enabled for target {policy['targetId']}")
+    guard_live_mutation("rollback", policy["targetId"])
     with TargetLock(policy["targetId"]):
         rollback_locked(policy, automatic=automatic)
 
@@ -709,10 +752,8 @@ def main():
     if command == "validate":
         validate_only(policy_path)
     elif command == "deploy":
-        guard_live_mutation(command)
         deploy(policy_path)
     else:
-        guard_live_mutation(command)
         rollback(policy_path)
 
 
