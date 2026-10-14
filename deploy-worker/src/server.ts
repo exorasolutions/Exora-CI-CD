@@ -35,6 +35,15 @@ type Target = {
 const app = Fastify({ logger: true });
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const executionEnabled = process.env.DEPLOY_EXECUTION_ENABLED === "true";
+const executionProjectAllowlist = new Set(
+  (process.env.DEPLOY_EXECUTION_PROJECTS ?? "")
+    .split(",").map((projectId) => projectId.trim()).filter(Boolean)
+);
+for (const projectId of executionProjectAllowlist) {
+  if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(projectId)) {
+    throw new Error("Invalid DEPLOY_EXECUTION_PROJECTS; expected comma-separated project IDs");
+  }
+}
 const token = process.env.DEPLOY_WORKER_TOKEN ?? "";
 const artifactStagingRoot = process.env.DEPLOY_ARTIFACT_STAGING_ROOT ?? "/opt/cicd/artifacts";
 const deployWorkRoot = process.env.DEPLOY_WORK_ROOT ?? "/opt/cicd/work";
@@ -133,7 +142,7 @@ app.post("/deploy", async (req, reply) => {
       return reply.code(409).send({ error: "deployment already in progress" });
     }
 
-    if (!executionEnabled || b.dryRun === true) {
+    if (!(executionEnabled && executionProjectAllowlist.has(b.projectId)) || b.dryRun === true) {
       await client.query(
         "UPDATE deployments SET state='DRY_RUN', finished_at=now() WHERE id=$1",[id]);
       await unlock(client,b.projectId,b.environment);

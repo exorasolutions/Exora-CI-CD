@@ -3,7 +3,7 @@ def call(Map cfg = [:]) {
   def profile = [:]
   def artifactName = "${cfg.projectId}-${env.BUILD_NUMBER}.tar.gz"
   validateArtifactName(artifactName)
-  def deploymentEnabled = deploymentExecutionEnabled()
+  def deploymentEnabled = deploymentExecutionEnabled(cfg.projectId as String)
 
   pipeline {
     agent none
@@ -573,12 +573,17 @@ private void validateArtifactName(String artifactName) {
   requireMatch('artifactName', artifactName, /^[A-Za-z0-9][A-Za-z0-9_.-]{0,120}\.tar\.gz$/)
 }
 
-private boolean deploymentExecutionEnabled() {
+private boolean deploymentExecutionEnabled(String projectId) {
   def enabled = (env.CENTRAL_CICD_DEPLOYMENT_EXECUTION_ENABLED ?: 'false').trim()
   if (!['true', 'false'].contains(enabled)) {
     error('Invalid administrator setting CENTRAL_CICD_DEPLOYMENT_EXECUTION_ENABLED. Expected true or false.')
   }
-  return enabled == 'true'
+  def rawProjects = (env.CENTRAL_CICD_AUTO_DEPLOY_PROJECTS ?: '').trim()
+  def projects = rawProjects ? rawProjects.split(',').collect { it.trim() }.findAll { it } : []
+  if (projects.any { !(it ==~ /^[a-z0-9][a-z0-9-]{0,62}$/) }) {
+    error('Invalid CENTRAL_CICD_AUTO_DEPLOY_PROJECTS. Use comma-separated project IDs.')
+  }
+  return enabled == 'true' && projects.contains(projectId)
 }
 
 private void requireRepositoryUrl(Object value) {

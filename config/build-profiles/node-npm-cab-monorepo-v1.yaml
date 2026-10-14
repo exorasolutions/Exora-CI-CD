@@ -29,5 +29,7 @@ packages:
     lockfile: package-lock.json
     install: npm ci
     build: npm run build
-    artifactPath: build
+    artifactIncludes:
+      - build
+      - nginx.conf
     artifactTarget: frontend

@@ -295,7 +295,7 @@ test('deployment execution defaults disabled and is administrator-env controlled
   assert.throws(() => deploymentExecutionEnabledFromAdminEnv('yes'), /invalid deployment execution flag/);
 
   const pipeline = readFileSync(pipelinePath, 'utf8');
-  assert.match(pipeline, /private boolean deploymentExecutionEnabled\(\)/);
+  assert.match(pipeline, /private boolean deploymentExecutionEnabled\(String projectId\)/);
   assert.match(pipeline, /CENTRAL_CICD_DEPLOYMENT_EXECUTION_ENABLED/);
   assert.doesNotMatch(pipeline, /cfg\.deploymentExecutionEnabled/);
   assert.doesNotMatch(pipeline, /DEPLOYMENT_MODE.*CENTRAL_CICD_DEPLOYMENT_EXECUTION_ENABLED/s);

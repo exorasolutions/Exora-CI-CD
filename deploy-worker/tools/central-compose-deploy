@@ -19,6 +19,8 @@ LOCK_ROOT = Path("/run/lock/central-cicd-compose")
 MAX_FILES = 50000
 MAX_BYTES = 1024 * 1024 * 1024
 LIVE_COMPOSE_MUTATIONS_APPROVED = False
+# CAB is the only candidate build-context mapping in this phase.
+LIVE_MUTATION_TARGETS = {"cab-production"}
 
 # Docker API access is root-equivalent on the host. This helper must therefore
 # treat the policy file as untrusted input and enforce every approved target
@@ -412,19 +414,106 @@ def previous_images(policy):
     return images
 
 
-def write_override(policy, images):
-    override = Path(policy["targetRoot"]) / ".central-cicd" / "compose-state" / f"override-{policy['releaseId']}.yaml"
+def write_override(policy, images, build_contexts=None, disable_build=False, suffix=""):
+    suffix_text = f"-{suffix}" if suffix else ""
+    override = Path(policy["targetRoot"]) / ".central-cicd" / "compose-state" / f"override-{policy['releaseId']}{suffix_text}.yaml"
     lines = ["services:"]
+    contexts = build_contexts or {}
     for service, image in images.items():
         safe_id(service, "service")
-        lines.extend([
-            f"  {service}:",
-            f"    image: {image}",
-        ])
-    override.write_text("\n".join(lines) + "\n")
+        lines.extend([f"  {service}:", f"    image: {json.dumps(image)}"])
+        candidate = contexts.get(service)
+        if candidate is not None:
+            context_path = Path(candidate["context"])
+            if not context_path.is_absolute() or context_path.is_symlink() or not context_path.is_dir():
+                fail("candidate build context must be an absolute, non-symlink directory")
+            lines.extend([
+                "    build:",
+                f"      context: {json.dumps(str(context_path))}",
+                f"      dockerfile: {json.dumps(candidate['dockerfile'])}",
+            ])
+        elif disable_build:
+            # Null removes the source build mapping during rollback.
+            lines.append("    build: null")
+    override.write_text(chr(10).join(lines) + chr(10))
     os.chmod(override, 0o600)
     return str(override)
 
+def prepare_build_contexts(policy, release):
+    """Validate CAB's verified release tree and create a runtime-only web image context."""
+    if policy.get("targetId") != "cab-production" or policy.get("projectId") != "cab":
+        fail("candidate artifact mapping is not yet approved for this compose target")
+
+    release = Path(release)
+    if release.is_symlink() or not release.is_dir():
+        fail("candidate release directory is missing or unsafe")
+
+    frontend = release / "frontend"
+    backend = release / "backend"
+    required_files = [
+        backend / "package.json",
+        backend / "package-lock.json",
+        backend / "Dockerfile",
+        backend / "server.js",
+        frontend / "build" / "index.html",
+    ]
+    for item in required_files:
+        if item.is_symlink() or not item.is_file():
+            fail(f"candidate artifact is missing a required file: {item.relative_to(release)}")
+
+    for context in (frontend, backend):
+        if context.is_symlink() or not context.is_dir():
+            fail("candidate build context is unsafe")
+        for item in context.rglob("*"):
+            if item.is_symlink():
+                fail(f"candidate build context contains a symlink: {item.relative_to(release)}")
+
+    # The built frontend artifact does not include the source nginx.conf, so
+    # generate this pinned runtime configuration in the verified release.
+    nginx_lines = [
+        "server {",
+        "    listen 80;",
+        "    server_name _;",
+        "    root /usr/share/nginx/html;",
+        "    index index.html;",
+        "    client_max_body_size 20m;",
+        "    location /api/ {",
+        "        proxy_pass http://backend:3223;",
+        "        proxy_set_header Host $host;",
+        "        proxy_set_header X-Real-IP $http_x_real_ip;",
+        "        proxy_set_header X-Forwarded-For $http_x_forwarded_for;",
+        "        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;",
+        "    }",
+        "    location /static/ { expires 30d; try_files $uri =404; }",
+        "    location / { try_files $uri $uri/ /index.html; }",
+        "}",
+    ]
+    (frontend / "nginx.conf").write_text(chr(10).join(nginx_lines) + chr(10))
+
+    dockerfile_lines = [
+        "FROM nginx:1.27-alpine",
+        "COPY nginx.conf /etc/nginx/conf.d/default.conf",
+        "COPY build/ /usr/share/nginx/html/",
+        "EXPOSE 80",
+        "HEALTHCHECK --interval=30s --timeout=3s --retries=3 CMD wget -q -O /dev/null http://127.0.0.1/ || exit 1",
+    ]
+    runtime_dockerfile = frontend / "Dockerfile.central-cicd"
+    runtime_dockerfile.write_text(chr(10).join(dockerfile_lines) + chr(10))
+    os.chmod(frontend / "nginx.conf", 0o644)
+    os.chmod(runtime_dockerfile, 0o644)
+
+    return {
+        "web": {"context": str(frontend.resolve(strict=True)), "dockerfile": runtime_dockerfile.name},
+        "backend": {"context": str(backend.resolve(strict=True)), "dockerfile": "Dockerfile"},
+    }
+
+
+def compose_deployment_order(policy):
+    """Restart the API before the web app for the CAB service contract."""
+    if policy.get("targetId") == "cab-production":
+        preferred = ["backend", "web"]
+        return [service for service in preferred if service in policy["builtServices"]]
+    return list(policy["builtServices"])
 
 def release_images(policy):
     return {
@@ -440,18 +529,27 @@ def wait_services(policy, attempts=60):
             container = inspect_container(container_id)
             state = container.get("State", {})
             health = state.get("Health")
-            if health:
-                if health.get("Status") == "healthy":
-                    break
-            elif state.get("Running"):
+            if not isinstance(health, dict):
+                fail(f"service is missing a required Docker healthcheck: {service}")
+            status = health.get("Status")
+            if status == "healthy":
                 break
+            if status == "unhealthy":
+                fail(f"Docker healthcheck reports unhealthy: {service}")
+            if not state.get("Running"):
+                fail(f"service is not running while awaiting health: {service}")
             time.sleep(2)
         else:
-            fail(f"service did not become healthy: {service}")
-
+            fail(f"service did not become healthy before timeout: {service}")
 
 def deploy(policy_path):
+    # Defense-in-depth even if dispatch is changed accidentally later.
+    if not LIVE_COMPOSE_MUTATIONS_APPROVED:
+        fail("live compose deployment blocked pending verified candidate build-context mapping")
     _, policy = load_policy(policy_path)
+    if policy["targetId"] not in LIVE_MUTATION_TARGETS:
+        fail(f"live compose deployment is not enabled for target {policy['targetId']}")
+
     with TargetLock(policy["targetId"]):
         state_file = state_path(policy)
         if state_file.exists():
@@ -464,51 +562,74 @@ def deploy(policy_path):
             release = extract_artifact(policy, artifact)
         finally:
             cleanup_staging(policy)
-        fail("live compose deployment blocked pending verified candidate build-context mapping")
-    old_images = previous_images(policy)
-    new_images = release_images(policy)
-    override = write_override(policy, new_images)
-    compose_config(policy, [override])
-    state = {
-        "deploymentId": policy["deploymentId"],
-        "releaseId": policy["releaseId"],
-        "policyPath": str(Path(policy_path).resolve()),
-        "releasePath": str(release),
-        "overrideFile": override,
-        "oldImages": old_images,
-        "newImages": new_images,
-        "status": "prepared",
-    }
-    write_state(policy, state)
+
+        state = None
+        try:
+            release_root = (Path(policy["targetRoot"]) / ".central-cicd" / "compose-releases").resolve(strict=True)
+            resolved_release = Path(release).resolve(strict=True)
+            if release_root not in resolved_release.parents:
+                fail("candidate release is outside the approved release root")
+
+            contexts = prepare_build_contexts(policy, resolved_release)
+            old_images = previous_images(policy)
+            new_images = release_images(policy)
+            override = write_override(policy, new_images, build_contexts=contexts)
+            compose_config(policy, [override])
+            state = {
+                "deploymentId": policy["deploymentId"],
+                "releaseId": policy["releaseId"],
+                "policyPath": str(Path(policy_path).resolve()),
+                "releasePath": str(resolved_release),
+                "overrideFile": override,
+                "oldImages": old_images,
+                "newImages": new_images,
+                "activationStarted": False,
+                "status": "prepared",
+            }
+            write_state(policy, state)
+
+            # Build both candidates before replacing either running service.
+            for service in compose_deployment_order(policy):
+                run([*compose_args(policy, [override]), "build", service], cwd=policy["composeWorkingDir"], timeout=1800)
+
+            # Once activation begins, errors must use the locked rollback path.
+            state["activationStarted"] = True
+            write_state(policy, state)
+            for service in compose_deployment_order(policy):
+                run([*compose_args(policy, [override]), "up", "-d", "--no-deps", service], cwd=policy["composeWorkingDir"], timeout=900)
+
+            wait_services(policy)
+            state["status"] = "deployed"
+            write_state(policy, state)
+            print(f"compose deployment {policy['deploymentId']} completed")
+        except Exception as deploy_error:
+            if state is not None and state.get("activationStarted"):
+                try:
+                    rollback_locked(policy, automatic=True)
+                except Exception as rollback_error:
+                    fail(f"deployment failed ({deploy_error}); rollback also failed ({rollback_error})")
+                fail(f"deployment failed; previous images restored: {deploy_error}")
+            if state is not None:
+                state["status"] = "failed_before_activation"
+                state["error"] = str(deploy_error)
+                write_state(policy, state)
+            fail(f"deployment failed before activation; live services were not changed: {deploy_error}")
+
+def rollback_locked(policy, automatic=False):
+    state_file = state_path(policy)
+    if not state_file.is_file() or state_file.is_symlink():
+        fail("deployment state record not found")
+    state = json.loads(state_file.read_text())
+    if state.get("status") not in {"deployed", "prepared"}:
+        fail("deployment state is not rollbackable")
+    if state.get("status") == "prepared" and not state.get("activationStarted"):
+        fail("deployment never began activation; no service rollback is required")
+
+    old_images = {}
+    report = {"services": {}}
     try:
         for service in policy["builtServices"]:
-            run([*compose_args(policy, [override]), "build", service], cwd=policy["composeWorkingDir"], timeout=1800)
-        for service in policy["builtServices"]:
-            run([*compose_args(policy, [override]), "up", "-d", "--no-deps", service], cwd=policy["composeWorkingDir"], timeout=900)
-        wait_services(policy)
-        state["status"] = "deployed"
-        write_state(policy, state)
-        print(f"compose deployment {policy['deploymentId']} completed")
-    except Exception as deploy_error:
-        try:
-            rollback(policy_path, automatic=True)
-        except Exception as rollback_error:
-            fail(f"deployment failed ({deploy_error}); rollback also failed ({rollback_error})")
-        fail(f"deployment failed; previous images restored: {deploy_error}")
-
-
-def rollback(policy_path, automatic=False):
-    _, policy = load_policy(policy_path)
-    with TargetLock(policy["targetId"]):
-        state_file = state_path(policy)
-        if not state_file.is_file() or state_file.is_symlink():
-            fail("deployment state record not found")
-        state = json.loads(state_file.read_text())
-        if state.get("status") not in {"deployed", "prepared"}:
-            fail("deployment state is not rollbackable")
-        old_images = {}
-        report = {"services": {}}
-        for service, value in state["oldImages"].items():
+            value = state.get("oldImages", {}).get(service, {})
             image_id = value.get("imageId", "")
             if not image_id.startswith("sha256:"):
                 fail(f"missing immutable previous image ID for {service}")
@@ -519,24 +640,33 @@ def rollback(policy_path, automatic=False):
                 fail(f"recovery image reference does not resolve to previous image for {service}")
             old_images[service] = recovery_ref
             report["services"][service] = {"previousImageId": image_id, "recoveryRef": recovery_ref}
-        override = write_override(policy, old_images)
-        try:
-            compose_config(policy, [override])
-            for service in policy["builtServices"]:
-                run([*compose_args(policy, [override]), "up", "-d", "--no-deps", service], cwd=policy["composeWorkingDir"], timeout=900)
-            wait_services(policy)
-            state["status"] = "rolled_back"
-            state["rollbackOverrideFile"] = override
-            state["rollbackReport"] = report
-            write_state(policy, state)
-            print(f"compose deployment {policy['deploymentId']} rolled back")
-        except Exception as error:
-            state["rollbackFailure"] = {"error": str(error), **report}
-            write_state(policy, state)
-            if automatic:
-                raise
-            fail(f"rollback failed: {error}")
 
+        override = write_override(policy, old_images, disable_build=True, suffix="rollback")
+        compose_config(policy, [override])
+        for service in compose_deployment_order(policy):
+            run([*compose_args(policy, [override]), "up", "-d", "--no-deps", service], cwd=policy["composeWorkingDir"], timeout=900)
+        wait_services(policy)
+        state["status"] = "rolled_back"
+        state["rollbackOverrideFile"] = override
+        state["rollbackReport"] = report
+        write_state(policy, state)
+        print(f"compose deployment {policy['deploymentId']} rolled back")
+    except Exception as error:
+        state["rollbackFailure"] = {"error": str(error), **report}
+        write_state(policy, state)
+        if automatic:
+            raise
+        fail(f"rollback failed: {error}")
+
+
+def rollback(policy_path, automatic=False):
+    if not LIVE_COMPOSE_MUTATIONS_APPROVED:
+        fail("live compose rollback blocked pending verified candidate build-context mapping and health contracts")
+    _, policy = load_policy(policy_path)
+    if policy["targetId"] not in LIVE_MUTATION_TARGETS:
+        fail(f"live compose rollback is not enabled for target {policy['targetId']}")
+    with TargetLock(policy["targetId"]):
+        rollback_locked(policy, automatic=automatic)
 
 def validate_only(policy_path):
     _, policy = load_policy(policy_path)
