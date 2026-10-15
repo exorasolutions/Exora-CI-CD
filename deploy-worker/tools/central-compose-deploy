@@ -2,7 +2,10 @@
 import hashlib
 import json
 import os
-import pwd
+try:
+    import pwd
+except ImportError:  # pragma: no cover - local Windows test compatibility
+    pwd = None
 import shutil
 import stat
 import re
@@ -24,6 +27,16 @@ MAX_BYTES = 1024 * 1024 * 1024
 # Actual permission requires a separate root-owned opt-in file.
 LIVE_MUTATION_TARGETS = {"cab-production"}
 LIVE_TARGETS_CONFIG = Path("/etc/central-cicd/compose-live-targets")
+STAGING_ROOT_ENV = "CENTRAL_CICD_STAGING_ROOT"
+STAGING_TARGET_PREFIX = "loomrun-staging-"
+PRODUCTION_ROOTS = {value["targetRoot"] for value in {
+    "cab-production": {"targetRoot": "/srv/apps/nammacabs"},
+    "exora-crm-production": {"targetRoot": "/srv/apps/exora_crm"},
+    "exora-shared-services-production": {"targetRoot": "/srv/apps/shared"},
+    "loomrun-production": {"targetRoot": "/srv/apps/loomrun"},
+    "qlix-production": {"targetRoot": "/srv/apps/qlix"},
+    "sunkidz-production": {"targetRoot": "/srv/apps/sunkidz"},
+}.values()}
 
 # Docker API access is root-equivalent on the host. This helper must therefore
 # treat the policy file as untrusted input and enforce every approved target
@@ -89,6 +102,8 @@ APPROVED_TARGETS = {
         "networks": "loomrun_default,shared",
         "persistentMounts": "/srv/apps/loomrun/.env:/app/.env:ro,/srv/apps/loomrun/data/storage:/loomrun-storage",
         "preservePolicy": "preserve-storage-env-redis-shared-network",
+        "candidateContextPolicy": "loomrun-source-root-v1",
+        "healthContract": "loomrun-web-root-api-ready-v1",
     },
     "qlix-production": {
         "projectId": "qlix",
@@ -234,10 +249,11 @@ def validate_policy_path(path_string):
         fail("policy is not a regular file")
     stat = policy_path.stat()
     try:
-        worker_uid = pwd.getpwnam("prasad").pw_uid
+        worker_uid = pwd.getpwnam("prasad").pw_uid if pwd is not None else -1
     except KeyError:
         worker_uid = -1
-    if stat.st_uid not in {0, os.getuid(), worker_uid}:
+    current_uid = getattr(os, "getuid", lambda: -1)()
+    if stat.st_uid not in {0, current_uid, worker_uid}:
         fail("policy owner is not approved")
     if stat.st_mode & 0o077:
         fail("policy file must not be accessible by group or other users")
@@ -305,6 +321,9 @@ def validate_approved_contract(policy):
     for key in ["networks", "internalPorts", "networkMode", "sharedDeploymentPolicy"]:
         if policy.get(key, "") != expected.get(key, ""):
             fail(f"compose policy violates approved contract: {key}")
+    for key in ["candidateContextPolicy", "healthContract"]:
+        if key in expected and policy.get(key) != expected[key]:
+            fail(f"compose policy violates approved contract: {key}")
     if policy.get("deploymentStatus") != "compose-helper-installed-and-staging-validated":
         fail("compose target is not approved for live helper execution")
     if policy.get("composeHealthPolicy") != "docker-healthcheck-required":
@@ -362,6 +381,122 @@ def stage_artifact(policy):
     return staged
 
 
+def staging_root_from_environment():
+    value = os.environ.get(STAGING_ROOT_ENV, "").strip()
+    if not value:
+        fail(f"{STAGING_ROOT_ENV} is required for staging commands")
+    root = Path(value)
+    if not root.is_absolute() or root.resolve(strict=False) == Path(root.anchor).resolve():
+        fail("staging root must be a non-root absolute path")
+    return root.resolve(strict=False)
+
+
+def validate_staging_policy(policy_path):
+    path = Path(policy_path)
+    if not path.is_absolute() or path.is_symlink() or not path.is_file():
+        fail("staging policy must be an absolute, regular, non-symlink file")
+    designated_root = staging_root_from_environment()
+    resolved_policy = path.resolve(strict=True)
+    if designated_root not in resolved_policy.parents:
+        fail("staging policy is outside the designated staging root")
+    try:
+        policy = json.loads(resolved_policy.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        fail("staging policy is not valid JSON")
+
+    required = [
+        "schemaVersion", "deploymentId", "releaseId", "projectId", "targetId",
+        "environment", "commitSha", "artifactPath", "artifactSha256", "targetRoot",
+        "composeProject", "composeWorkingDir", "composeFiles", "composeServices",
+        "builtServices", "healthServices", "containers", "persistentMounts",
+        "publicBindings", "preservePolicy", "candidateContextPolicy", "healthContract",
+        "stagingRoot", "lockRoot", "stagingNetwork", "stagingVolumes", "stagingMarker",
+    ]
+    for key in required:
+        if key not in policy:
+            fail(f"staging policy missing {key}")
+    if policy["schemaVersion"] != 1 or policy["environment"] != "staging":
+        fail("staging policy must explicitly use environment=staging")
+    if policy["projectId"] != "loomrun":
+        fail("staging mode only supports project loomrun")
+    if not re.fullmatch(r"loomrun-staging-[A-Za-z0-9_.-]{1,100}", policy["targetId"]):
+        fail("invalid Loomrun staging target ID")
+    if not re.fullmatch(r"loomrun-staging-[A-Za-z0-9_.-]{1,100}", policy["composeProject"]):
+        fail("invalid Loomrun staging Compose project")
+    if policy["targetId"] in LIVE_MUTATION_TARGETS or policy["targetId"] in APPROVED_TARGETS:
+        fail("staging policy cannot use a production target ID")
+    safe_id(policy["deploymentId"], "deployment ID")
+    safe_id(policy["releaseId"], "release ID")
+    if not re.fullmatch(r"[a-f0-9]{40}", policy["commitSha"]):
+        fail("invalid staging commit SHA")
+    if not re.fullmatch(r"[a-f0-9]{64}", policy["artifactSha256"]):
+        fail("invalid staging artifact SHA-256")
+    if policy["stagingRoot"] != policy["targetRoot"]:
+        fail("stagingRoot and targetRoot must be identical")
+    target_root = Path(policy["targetRoot"]).resolve(strict=False)
+    if designated_root not in target_root.parents or target_root == designated_root:
+        fail("staging target root must be a child of the designated staging root")
+    if str(target_root) in PRODUCTION_ROOTS or any(root in target_root.parents for root in PRODUCTION_ROOTS):
+        fail("staging target root overlaps a production root")
+    working_dir = Path(policy["composeWorkingDir"]).resolve(strict=False)
+    if working_dir != target_root:
+        fail("staging Compose working directory must equal staging target root")
+    if policy["candidateContextPolicy"] != "loomrun-source-root-v1":
+        fail("staging policy lacks the approved Loomrun context policy")
+    if policy["healthContract"] != "loomrun-web-root-api-ready-v1":
+        fail("staging policy lacks the approved Loomrun health contract")
+    if policy["composeServices"] != ["web", "api", "redis", "postgres"]:
+        fail("staging services must be the explicit Loomrun disposable service set")
+    if policy["builtServices"] != ["api", "web"] or policy["healthServices"] != ["api", "web"]:
+        fail("staging build and health service order is not approved")
+    for service in policy["composeServices"]:
+        safe_id(service, "compose service")
+    for key in ["stagingNetwork", "lockRoot"]:
+        value = Path(policy[key]).resolve(strict=False) if key == "lockRoot" else policy[key]
+        if key == "lockRoot" and (value != target_root / ".central-cicd" / "locks"):
+            fail("staging lock root must be inside the staging root")
+        if key == "stagingNetwork" and not re.fullmatch(r"loomrun-staging-[A-Za-z0-9_.-]{1,100}", value):
+            fail("invalid staging network name")
+    if not isinstance(policy["stagingVolumes"], list) or not policy["stagingVolumes"]:
+        fail("staging volumes must be an explicit non-empty list")
+    for volume in policy["stagingVolumes"]:
+        safe_id(volume, "staging volume")
+        if not volume.startswith("loomrun-staging-"):
+            fail("staging volume is not uniquely namespaced")
+    marker = Path(policy["stagingMarker"])
+    if marker != target_root / ".central-cicd" / "staging-marker.json" or marker.is_symlink():
+        fail("invalid staging ownership marker")
+    if not marker.is_file():
+        fail("staging ownership marker is missing")
+    for file_name in policy["composeFiles"]:
+        file_path = Path(file_name).resolve(strict=False)
+        if target_root not in file_path.parents or not file_path.is_file():
+            fail("staging Compose file is outside the staging root or missing")
+        if str(file_path) in PRODUCTION_ROOTS:
+            fail("staging Compose file overlaps a production path")
+        try:
+            compose_text = file_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            fail("cannot read staging Compose file")
+        normalized_compose = compose_text.replace("\\", "/")
+        for production_root in PRODUCTION_ROOTS:
+            if production_root in normalized_compose:
+                fail("staging Compose file references a production root")
+        if re.search(r"(?im)^\s*external\s*:\s*true\s*$", compose_text):
+            fail("staging Compose file cannot use an external network")
+        if policy["stagingNetwork"] not in compose_text:
+            fail("staging Compose file does not declare the approved staging network")
+        for volume in policy["stagingVolumes"]:
+            if volume not in compose_text:
+                fail("staging Compose file does not declare every approved staging volume")
+        if "staging.env" not in normalized_compose:
+            fail("staging Compose file must use the disposable staging environment file")
+    artifact = Path(policy["artifactPath"]).resolve(strict=False)
+    if target_root not in artifact.parents or artifact.is_symlink() or not artifact.is_file():
+        fail("staging artifact must be a regular file inside the staging root")
+    return resolved_policy, policy
+
+
 def validate_artifact_copy(policy, artifact):
     digest = hashlib.sha256()
     with artifact.open("rb") as stream:
@@ -370,6 +505,25 @@ def validate_artifact_copy(policy, artifact):
     if digest.hexdigest().lower() != policy["artifactSha256"].lower():
         fail("artifact SHA-256 mismatch")
     return artifact
+
+
+def stage_artifact_for_staging(policy):
+    original = Path(policy["artifactPath"]).resolve(strict=True)
+    target_root = Path(policy["targetRoot"]).resolve(strict=True)
+    if target_root not in original.parents or original.is_symlink() or not original.is_file():
+        fail("staging artifact is outside the staging root")
+    staging_root = target_root / ".central-cicd" / "staging-artifacts" / policy["deploymentId"]
+    if staging_root.exists():
+        if staging_root.is_symlink():
+            fail("staging artifact directory must not be a symlink")
+        fail("staging artifact directory already exists")
+    staging_root.mkdir(mode=0o700, parents=True)
+    os.chmod(staging_root, 0o700)
+    staged = staging_root / "artifact.tar.gz"
+    with original.open("rb") as source, staged.open("xb") as destination:
+        shutil.copyfileobj(source, destination, length=1024 * 1024)
+    os.chmod(staged, 0o600)
+    return staged
 
 
 def validate_archive(artifact):
@@ -422,26 +576,58 @@ def cleanup_staging(policy):
         shutil.rmtree(path)
 
 
+def cleanup_staging_artifact(policy):
+    path = Path(policy["targetRoot"]) / ".central-cicd" / "staging-artifacts" / policy["deploymentId"]
+    if path.exists() and not path.is_symlink():
+        shutil.rmtree(path)
+
+
 class TargetLock:
-    def __init__(self, target_id):
+    def __init__(self, target_id, lock_root=None):
         safe_id(target_id, "target ID")
         self.target_id = target_id
-        self.path = LOCK_ROOT / f"{target_id}.lock"
+        self.lock_root = Path(lock_root) if lock_root is not None else LOCK_ROOT
+        self.path = self.lock_root / f"{target_id}.lock"
         self.fd = None
+        self._windows_lock = False
 
     def __enter__(self):
-        import fcntl
-        LOCK_ROOT.mkdir(mode=0o700, parents=True, exist_ok=True)
-        os.chmod(LOCK_ROOT, 0o700)
-        self.fd = os.open(str(self.path), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-        fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.lock_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.chmod(self.lock_root, 0o700)
+        if self.path.exists() and self.path.is_symlink():
+            fail("lock path must not be a symlink")
+        no_follow = getattr(os, "O_NOFOLLOW", 0)
+        try:
+            self.fd = os.open(str(self.path), os.O_CREAT | os.O_RDWR | no_follow, 0o600)
+        except PermissionError:
+            fail("deployment lock is already held")
+        try:
+            import fcntl
+            fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except ImportError:
+            import msvcrt
+            os.write(self.fd, b"0")
+            os.lseek(self.fd, 0, os.SEEK_SET)
+            try:
+                msvcrt.locking(self.fd, msvcrt.LK_NBLCK, 1)
+            except OSError:
+                os.close(self.fd)
+                self.fd = None
+                fail("staging deployment lock is already held")
+            self._windows_lock = True
+        os.ftruncate(self.fd, 0)
         os.write(self.fd, str(os.getpid()).encode())
         return self
 
     def __exit__(self, _exc_type, _exc, _tb):
-        import fcntl
         if self.fd is not None:
-            fcntl.flock(self.fd, fcntl.LOCK_UN)
+            if self._windows_lock:
+                import msvcrt
+                os.lseek(self.fd, 0, os.SEEK_SET)
+                msvcrt.locking(self.fd, msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(self.fd, fcntl.LOCK_UN)
             os.close(self.fd)
             self.fd = None
 
@@ -500,13 +686,14 @@ def write_override(policy, images, build_contexts=None, disable_build=False, suf
                 f"      dockerfile: {json.dumps(candidate['dockerfile'])}",
             ])
         elif disable_build:
-            # Null removes the source build mapping during rollback.
-            lines.append("    build: null")
+            # Compose's reset tag removes the source build mapping during rollback.
+            # A plain YAML null is rejected by current Compose versions.
+            lines.append("    build: !reset null")
     override.write_text(chr(10).join(lines) + chr(10))
     os.chmod(override, 0o600)
     return str(override)
 
-def prepare_build_contexts(policy, release):
+def prepare_cab_build_contexts(policy, release):
     """Validate CAB's verified release tree and create a runtime-only web image context."""
     if policy.get("targetId") != "cab-production" or policy.get("projectId") != "cab":
         fail("candidate artifact mapping is not yet approved for this compose target")
@@ -589,10 +776,72 @@ def prepare_build_contexts(policy, release):
     }
 
 
+def _required_release_path(release, relative, directory=False):
+    candidate = release / relative
+    if candidate.is_symlink():
+        fail(f"candidate release contains a symlink: {relative}")
+    if directory and not candidate.is_dir():
+        fail(f"candidate artifact is missing a required directory: {relative}")
+    if not directory and not candidate.is_file():
+        fail(f"candidate artifact is missing a required file: {relative}")
+    resolved = candidate.resolve(strict=True)
+    if release not in resolved.parents:
+        fail(f"candidate release path escapes extraction root: {relative}")
+    return resolved
+
+
+def prepare_loomrun_build_contexts(policy, release):
+    """Validate Loomrun's source artifact and return its two Docker contexts."""
+    target_id = policy.get("targetId")
+    if (target_id != "loomrun-production" and
+            not (isinstance(target_id, str) and target_id.startswith(STAGING_TARGET_PREFIX))) or policy.get("projectId") != "loomrun":
+        fail("candidate artifact mapping is not approved for this compose target")
+    if policy.get("candidateContextPolicy") != "loomrun-source-root-v1":
+        fail("candidate artifact lacks the approved Loomrun context policy")
+
+    release = Path(release)
+    if release.is_symlink() or not release.is_dir():
+        fail("candidate release directory is missing or unsafe")
+    release = release.resolve(strict=True)
+
+    for relative in [
+        "compose.yaml",
+        "compose.prod.yaml",
+        "apps/web/Dockerfile",
+        "apps/web/package.json",
+        "apps/web/package-lock.json",
+        "apps/web/nginx.conf",
+        "apps/api/Dockerfile",
+        "apps/api/requirements.lock.txt",
+        "prisma/schema.prisma",
+    ]:
+        _required_release_path(release, relative)
+    for relative in ["apps/api/loomrun_api", "apps/web/src", "apps/web/public", "n8n", "prisma"]:
+        _required_release_path(release, relative, directory=True)
+
+    return {
+        "web": {"context": str((release / "apps" / "web").resolve(strict=True)), "dockerfile": "Dockerfile"},
+        "api": {"context": str(release), "dockerfile": "apps/api/Dockerfile"},
+    }
+
+
+def prepare_build_contexts(policy, release):
+    """Dispatch candidate preparation by explicit project-specific policy."""
+    target_id = policy.get("targetId")
+    if target_id == "cab-production":
+        return prepare_cab_build_contexts(policy, release)
+    if target_id == "loomrun-production" or (isinstance(target_id, str) and target_id.startswith(STAGING_TARGET_PREFIX)):
+        return prepare_loomrun_build_contexts(policy, release)
+    fail("candidate artifact mapping is not approved for this compose target")
+
+
 def compose_deployment_order(policy):
-    """Restart the API before the web app for the CAB service contract."""
+    """Apply service updates in the verified application startup order."""
     if policy.get("targetId") == "cab-production":
         preferred = ["backend", "web"]
+        return [service for service in preferred if service in policy["builtServices"]]
+    if policy.get("targetId") == "loomrun-production":
+        preferred = ["api", "web"]
         return [service for service in preferred if service in policy["builtServices"]]
     return list(policy["builtServices"])
 
@@ -743,6 +992,96 @@ def rollback(policy_path, automatic=False):
     with TargetLock(policy["targetId"]):
         rollback_locked(policy, automatic=automatic)
 
+
+def staging_deploy(policy_path):
+    _, policy = validate_staging_policy(policy_path)
+    target_root = Path(policy["targetRoot"])
+    with TargetLock(policy["targetId"], policy["lockRoot"]):
+        state_file = state_path(policy)
+        if state_file.exists():
+            fail("staging deployment ID already has a state record")
+        artifact = stage_artifact_for_staging(policy)
+        try:
+            validate_artifact_copy(policy, artifact)
+            validate_archive(artifact)
+            release = extract_artifact(policy, artifact)
+        finally:
+            cleanup_staging_artifact(policy)
+
+        state = None
+        try:
+            release_root = (target_root / ".central-cicd" / "compose-releases").resolve(strict=True)
+            resolved_release = Path(release).resolve(strict=True)
+            if release_root not in resolved_release.parents:
+                fail("staging candidate release is outside the approved release root")
+            contexts = prepare_build_contexts(policy, resolved_release)
+            old_images = previous_images(policy)
+            new_images = release_images(policy)
+            override = write_override(policy, new_images, build_contexts=contexts)
+            compose_config(policy, [override])
+            state = {
+                "deploymentId": policy["deploymentId"],
+                "releaseId": policy["releaseId"],
+                "policyPath": str(Path(policy_path).resolve()),
+                "releasePath": str(resolved_release),
+                "overrideFile": override,
+                "oldImages": old_images,
+                "newImages": new_images,
+                "activationStarted": False,
+                "status": "prepared",
+            }
+            write_state(policy, state)
+            for service in compose_deployment_order(policy):
+                run([*compose_args(policy, [override]), "build", service], cwd=policy["composeWorkingDir"], timeout=1800)
+            state["activationStarted"] = True
+            write_state(policy, state)
+            for service in compose_deployment_order(policy):
+                run([*compose_args(policy, [override]), "up", "-d", "--no-deps", service], cwd=policy["composeWorkingDir"], timeout=900)
+            wait_services(policy)
+            state["status"] = "deployed"
+            write_state(policy, state)
+            print(json.dumps({"status": "deployed", "oldImages": old_images, "newImages": new_images}, sort_keys=True))
+        except Exception as deploy_error:
+            if state is not None and state.get("activationStarted"):
+                try:
+                    rollback_locked(policy, automatic=True)
+                except Exception as rollback_error:
+                    fail(f"staging deployment failed ({deploy_error}); rollback also failed ({rollback_error})")
+                fail(f"staging deployment failed; previous images restored: {deploy_error}")
+            if state is not None:
+                state["status"] = "failed_before_activation"
+                state["error"] = str(deploy_error)
+                write_state(policy, state)
+            fail(f"staging deployment failed before activation; no services were changed: {deploy_error}")
+
+
+def staging_rollback(policy_path):
+    _, policy = validate_staging_policy(policy_path)
+    with TargetLock(policy["targetId"], policy["lockRoot"]):
+        rollback_locked(policy)
+
+
+def staging_cleanup(policy_path):
+    _, policy = validate_staging_policy(policy_path)
+    target_root = Path(policy["targetRoot"])
+    marker = Path(policy["stagingMarker"])
+    try:
+        marker_data = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        fail("staging ownership marker is invalid")
+    if marker_data.get("targetId") != policy["targetId"] or marker_data.get("deploymentId") != policy["deploymentId"]:
+        fail("staging ownership marker does not match the policy")
+    compose_config(policy)
+    run([*compose_args(policy), "down", "--volumes", "--remove-orphans"], cwd=policy["composeWorkingDir"], timeout=300)
+    image_refs = docker(["images", "--format", "{{.Repository}}:{{.Tag}}"], capture=True).splitlines()
+    prefix = f"{policy['composeProject']}-"
+    for image_ref in image_refs:
+        if image_ref.startswith(prefix):
+            run(["docker", "image", "rm", image_ref], timeout=300)
+    if target_root.exists() and not target_root.is_symlink():
+        shutil.rmtree(target_root)
+    print(f"staging cleanup completed for {policy['targetId']}")
+
 def validate_only(policy_path):
     _, policy = load_policy(policy_path)
     with TargetLock(policy["targetId"]):
@@ -759,17 +1098,23 @@ def validate_only(policy_path):
 
 
 def main():
-    if len(sys.argv) != 3 or sys.argv[1] not in {"validate", "deploy", "rollback"}:
-        fail("usage: central-compose-deploy validate|deploy|rollback POLICY_JSON")
+    if len(sys.argv) != 3 or sys.argv[1] not in {"validate", "deploy", "rollback", "stage-deploy", "stage-rollback", "stage-cleanup"}:
+        fail("usage: central-compose-deploy validate|deploy|rollback|stage-deploy|stage-rollback|stage-cleanup POLICY_JSON")
     command, policy_path = sys.argv[1], sys.argv[2]
     if command == "validate":
         validate_only(policy_path)
     elif command == "deploy":
         guard_live_mutation(command)
         deploy(policy_path)
-    else:
+    elif command == "rollback":
         guard_live_mutation(command)
         rollback(policy_path)
+    elif command == "stage-deploy":
+        staging_deploy(policy_path)
+    elif command == "stage-rollback":
+        staging_rollback(policy_path)
+    else:
+        staging_cleanup(policy_path)
 
 
 if __name__ == "__main__":

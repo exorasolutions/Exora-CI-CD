@@ -107,6 +107,32 @@ test('validates full 40-character commit SHA only', () => {
   assert.throws(() => validateCommitSha('g123456789abcdef0123456789abcdef01234567'), /invalid commit sha/);
 });
 
+test('Loomrun source profile packages the verified Compose build context without secrets or data', () => {
+  const profile = parseBuildProfileYaml(
+    'node-npm-loomrun-compose-source-v1',
+    readFileSync(join(profileDir, 'node-npm-loomrun-compose-source-v1.yaml'), 'utf8')
+  );
+  assert.equal(profile.artifactPath, '.central-cicd/release');
+  assert.match(profile.build ?? '', /compose\.yaml compose\.prod\.yaml apps n8n prisma scripts package\.json package-lock\.json/);
+  assert.match(profile.build ?? '', /--exclude=\.env/);
+  assert.match(profile.build ?? '', /--exclude=data/);
+  for (const generated of [
+    '__pycache__',
+    '.pytest_cache',
+    '.ruff_cache',
+    '.mypy_cache',
+    '.coverage',
+    'coverage',
+    'htmlcov',
+    '.cache',
+    '.turbo',
+    '.next'
+  ]) {
+    assert.match(profile.build ?? '', new RegExp(`--exclude=.*${generated.replace('.', '\\.')}`));
+  }
+  assert.doesNotMatch(profile.build ?? '', /--exclude=\.dockerignore/);
+});
+
 test('allows blank commit input but resolves and pins the trusted branch HEAD', () => {
   const pipeline = readFileSync(pipelinePath, 'utf8');
   assert.match(pipeline, /stage\('Resolve application source'\)/);

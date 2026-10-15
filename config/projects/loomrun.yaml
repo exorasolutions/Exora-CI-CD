@@ -17,4 +17,7 @@ project:
     targetId: loomrun-production
     environment: production
   healthCheck:
-    type: none
+    type: http
+    url: http://127.0.0.1:8107/ready
+    expectedStatus: 200
+    timeoutMs: 10000

@@ -29,6 +29,8 @@ const target: ComposeTarget = {
   environment: "production",
   adapter: "compose",
   targetPath: "/srv/apps/loomrun",
+  healthUrl: "http://127.0.0.1:8107/ready",
+  healthExpectedStatus: 200,
   runtime: {
     composeProject: "loomrun",
     composeWorkingDir: "/srv/apps/loomrun",
@@ -42,6 +44,7 @@ const target: ComposeTarget = {
     networks: "loomrun_default,shared",
     persistentMounts: "/srv/apps/loomrun/.env:/app/.env:ro,/srv/apps/loomrun/data/storage:/loomrun-storage",
     preservePolicy: "preserve-storage-env-redis-shared-network",
+    healthContract: "loomrun-web-root-api-ready-v1",
     deploymentStatus: "compose-helper-installed-and-staging-validated",
     composeHealthPolicy: "docker-healthcheck-required"
   }
@@ -57,6 +60,14 @@ test("accepts approved compose target contract", () => {
   assert.deepEqual(policy.builtServices, ["web", "api"]);
   assert.deepEqual(policy.healthServices, ["web", "api"]);
   assert.deepEqual(policy.containers, ["loomrun-web-1", "loomrun-api-1", "loomrun-redis-1"]);
+});
+
+test("rejects Loomrun health policies that are not the verified web/API contract", () => {
+  assert.throws(() => validateComposeTarget({ ...target, healthUrl: "http://127.0.0.1:8107/health" }, request), /verified \/ready health contract/);
+  assert.throws(() => validateComposeTarget({
+    ...target,
+    runtime: { ...target.runtime, healthContract: "none" }
+  }, request), /approved health contract/);
 });
 
 test("rejects repository, target, root, project, compose file, and wrong-service mismatches", () => {
@@ -184,7 +195,9 @@ test("rejects malicious compose artifacts before helper execution", async () => 
 
 test("compose helper does not contain broad destructive docker operations", () => {
   const helper = readFileSync(path.resolve("tools/central-compose-deploy"), "utf8");
-  assert.doesNotMatch(helper, /compose.*down/);
+  const productionHelper = helper.slice(0, helper.indexOf("def staging_cleanup"));
+  assert.doesNotMatch(productionHelper, /compose.*down/);
+  assert.match(helper, /def staging_cleanup/);
   assert.doesNotMatch(helper, /system prune/);
   assert.doesNotMatch(helper, /docker.*rm.*\*/);
   assert.match(helper, /"--no-deps"/);

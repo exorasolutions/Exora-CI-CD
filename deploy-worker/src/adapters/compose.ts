@@ -70,6 +70,8 @@ type ComposePolicy = {
   sharedDeploymentPolicy?: string;
   deploymentStatus: string;
   composeHealthPolicy: string;
+  candidateContextPolicy?: string;
+  healthContract?: string;
 };
 
 const APPROVED_COMPOSE_TARGETS: Record<string, {
@@ -170,6 +172,14 @@ export function validateComposeTarget(target: ComposeTarget, request: ComposeDep
   if (composeHealthPolicy !== "docker-healthcheck-required") {
     throw new Error(`compose target lacks an approved health policy: ${target.id}`);
   }
+  if (target.id === "loomrun-production") {
+    if (target.healthUrl !== "http://127.0.0.1:8107/ready" || (target.healthExpectedStatus ?? 200) !== 200) {
+      throw new Error("Loomrun requires the verified /ready health contract");
+    }
+    if (runtime.healthContract !== "loomrun-web-root-api-ready-v1") {
+      throw new Error("Loomrun target lacks its approved health contract");
+    }
+  }
   if (target.id === "exora-shared-services-production" && runtime.sharedDeploymentPolicy !== "explicit-shared-services-policy") {
     throw new Error("shared services deployment requires an explicit shared-services policy");
   }
@@ -204,7 +214,9 @@ export function validateComposeTarget(target: ComposeTarget, request: ComposeDep
     networkMode: runtime.networkMode,
     sharedDeploymentPolicy: runtime.sharedDeploymentPolicy,
     deploymentStatus,
-    composeHealthPolicy
+    composeHealthPolicy,
+    candidateContextPolicy: runtime.candidateContextPolicy,
+    healthContract: runtime.healthContract
   };
 }
 

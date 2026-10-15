@@ -95,6 +95,22 @@ test("new production targets match verified VPS runtime paths and remain disable
     assert.equal(target.runtime.deploymentStatus, target.id === 'cab-production' ? 'compose-helper-installed-and-staging-validated' : 'disabled-compose-helper-not-production-installed');
     assert.equal(target.runtime.composeHealthPolicy, target.id === 'cab-production' ? 'docker-healthcheck-required' : 'blocked-pending-verified-health-contract');
   }
+
+  const loomrun = targets.get('loomrun-production');
+  assert.ok(loomrun);
+  assert.equal(loomrun.runtime.composeServices, 'web,api,redis');
+  assert.equal(loomrun.runtime.builtServices, 'web,api');
+  assert.equal(loomrun.runtime.healthServices, 'web,api');
+  assert.equal(loomrun.runtime.publicBindings, '127.0.0.1:8107->80');
+  assert.equal(loomrun.runtime.internalPorts, 'api:8002,redis:6379');
+  assert.equal(loomrun.runtime.networks, 'loomrun_default,shared');
+  assert.equal(loomrun.runtime.persistentMounts, '/srv/apps/loomrun/.env:/app/.env:ro,/srv/apps/loomrun/data/storage:/loomrun-storage');
+  assert.equal(loomrun.health.type, 'http');
+  assert.equal(loomrun.health.url, 'http://127.0.0.1:8107/ready');
+  assert.equal(loomrun.health.expectedStatus, 200);
+  assert.equal(loomrun.runtime.healthContract, 'loomrun-web-root-api-ready-v1');
+  assert.equal(loomrun.runtime.composeHealthPolicy, 'blocked-pending-verified-health-contract');
+  assert.equal(loomrun.runtime.deploymentStatus, 'disabled-compose-helper-not-production-installed');
 });
 
 test("project target references resolve to matching target configs", () => {

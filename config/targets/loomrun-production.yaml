@@ -6,7 +6,9 @@ rootPath: /srv/apps/loomrun
 releaseRoot: /srv/apps/loomrun/.central-cicd/releases
 currentPath: /srv/apps/loomrun
 health:
-  type: none
+  type: http
+  url: http://127.0.0.1:8107/ready
+  expectedStatus: 200
   timeoutMs: 10000
 runtime:
   composeProject: loomrun
@@ -21,6 +23,7 @@ runtime:
   networks: loomrun_default,shared
   persistentMounts: /srv/apps/loomrun/.env:/app/.env:ro,/srv/apps/loomrun/data/storage:/loomrun-storage
   preservePolicy: preserve-storage-env-redis-shared-network
+  healthContract: loomrun-web-root-api-ready-v1
   deploymentStatus: disabled-compose-helper-not-production-installed
   composeHealthPolicy: blocked-pending-verified-health-contract
 enabled: false
