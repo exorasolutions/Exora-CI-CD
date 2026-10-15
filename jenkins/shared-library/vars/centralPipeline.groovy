@@ -217,6 +217,7 @@ private Map loadTrustedProjectSource(Map cfg) {
   if (project.id != cfg.projectId) {
     error("Trusted project id mismatch: expected ${cfg.projectId}, got ${project.id}")
   }
+  applyTrustedDeploymentPolicy(cfg, project)
   def github = project.github
   if (!(github instanceof Map) || !(github.owner instanceof String) || !(github.repo instanceof String) || !(github.branch instanceof String)) {
     error("Malformed trusted repository configuration for ${cfg.projectId}")
@@ -232,6 +233,33 @@ private Map loadTrustedProjectSource(Map cfg) {
   trustedConfig.repository = repository
   enforceProjectDeploymentPolicy(trustedConfig)
   return [repository: repository, branch: github.branch as String]
+}
+
+private void applyTrustedDeploymentPolicy(Map cfg, Map project) {
+  def deployment = project.deployment
+  if (!(deployment instanceof Map) ||
+      !(deployment.targetId instanceof String) || !deployment.targetId.trim() ||
+      !(deployment.adapter instanceof String) || !deployment.adapter.trim() ||
+      !(deployment.environment instanceof String) || !deployment.environment.trim()) {
+    error("Malformed trusted deployment configuration for ${cfg.projectId}")
+  }
+
+  def expectedTarget = deployment.targetId as String
+  def expectedAdapter = deployment.adapter as String
+  def expectedEnvironment = deployment.environment as String
+  if (!cfg.targetId) cfg.targetId = expectedTarget
+  if (!cfg.deploymentAdapter) cfg.deploymentAdapter = expectedAdapter
+  if (!cfg.environment) cfg.environment = expectedEnvironment
+
+  if (cfg.targetId != expectedTarget) {
+    error("Deployment target does not match trusted project configuration for ${cfg.projectId}")
+  }
+  if (cfg.deploymentAdapter != expectedAdapter) {
+    error("Deployment adapter does not match trusted project configuration for ${cfg.projectId}")
+  }
+  if (cfg.environment != expectedEnvironment) {
+    error("Deployment environment does not match trusted project configuration for ${cfg.projectId}")
+  }
 }
 
 private String checkoutAndResolveCommit(Map cfg, Map trustedSource) {

@@ -381,6 +381,18 @@ test('manual and automatic modes skip deployment while execution is disabled', (
   assert.match(pipeline, /stage\('Deployment handoff'\)[\s\S]*when \{\s*beforeAgent true\s*expression \{ deploymentEnabled \}\s*\}/);
 });
 
+test('trusted project registry supplies and pins the deployment handoff contract', () => {
+  const pipeline = readFileSync(pipelinePath, 'utf8');
+  assert.match(pipeline, /applyTrustedDeploymentPolicy\(cfg, project\)/);
+  assert.match(pipeline, /def deployment = project\.deployment/);
+  assert.match(pipeline, /if \(!cfg\.targetId\) cfg\.targetId = expectedTarget/);
+  assert.match(pipeline, /if \(!cfg\.deploymentAdapter\) cfg\.deploymentAdapter = expectedAdapter/);
+  assert.match(pipeline, /if \(!cfg\.environment\) cfg\.environment = expectedEnvironment/);
+  assert.match(pipeline, /Deployment target does not match trusted project configuration/);
+  assert.match(pipeline, /Deployment adapter does not match trusted project configuration/);
+  assert.match(pipeline, /Deployment environment does not match trusted project configuration/);
+});
+
 test('disabled deployment does not require deployment agent or contact deploy worker', () => {
   const pipeline = readFileSync(pipelinePath, 'utf8');
   const disabledStage = pipeline.slice(pipeline.indexOf("stage('Deployment disabled')"), pipeline.indexOf("stage('Manual approval')"));
