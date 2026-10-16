@@ -4,7 +4,8 @@ def call(Map cfg = [:]) {
   def trustedSource = [:]
   def artifactName = "${cfg.projectId}-${env.BUILD_NUMBER}.tar.gz"
   validateArtifactName(artifactName)
-  def deploymentEnabled = deploymentExecutionEnabled(cfg.projectId as String)
+  def deploymentRequested = deploymentExecutionEnabled(cfg.projectId as String)
+  def deploymentEnabled = false
 
   pipeline {
     agent none
@@ -26,6 +27,10 @@ def call(Map cfg = [:]) {
                 trustedSource = loadTrustedProjectSource(cfg)
                 cfg.repository = trustedSource.repository
                 enforceProjectDeploymentPolicy(cfg)
+                deploymentEnabled = deploymentRequested && trustedSource.targetEnabled == true
+                if (deploymentRequested && !deploymentEnabled) {
+                  echo "Deployment execution skipped: trusted target ${cfg.targetId} is disabled in the central target registry."
+                }
                 cfg.commitSha = checkoutAndResolveCommit(cfg, trustedSource)
               }
             }
@@ -90,7 +95,7 @@ def call(Map cfg = [:]) {
       stage('Deployment disabled') {
         when { expression { !deploymentEnabled } }
         steps {
-          echo 'Deployment execution skipped: central deployment execution flag is disabled.'
+          echo 'Deployment execution skipped: central deployment execution or trusted target enablement is disabled.'
           echo 'No deployment agent, deploy worker, or deployment adapter will be contacted.'
         }
       }
@@ -226,6 +231,16 @@ private Map loadTrustedProjectSource(Map cfg) {
     error("Trusted project id mismatch: expected ${cfg.projectId}, got ${project.id}")
   }
   applyTrustedDeploymentPolicy(cfg, project)
+  def targetFile = "config/targets/${project.deployment.targetId}.yaml"
+  if (!fileExists(targetFile)) {
+    error("Missing trusted deployment target configuration: ${targetFile}")
+  }
+  def target = readYaml file: targetFile
+  if (!(target instanceof Map) || target.id != project.deployment.targetId ||
+      target.projectId != project.id || target.environment != project.deployment.environment ||
+      target.adapter != project.deployment.adapter || !(target.enabled instanceof Boolean)) {
+    error("Malformed or mismatched trusted deployment target configuration: ${targetFile}")
+  }
   def github = project.github
   if (!(github instanceof Map) || !(github.owner instanceof String) || !(github.repo instanceof String) || !(github.branch instanceof String)) {
     error("Malformed trusted repository configuration for ${cfg.projectId}")
@@ -240,7 +255,7 @@ private Map loadTrustedProjectSource(Map cfg) {
   def trustedConfig = cfg.clone()
   trustedConfig.repository = repository
   enforceProjectDeploymentPolicy(trustedConfig)
-  return [repository: repository, branch: github.branch as String]
+  return [repository: repository, branch: github.branch as String, targetEnabled: target.enabled]
 }
 
 private void applyTrustedDeploymentPolicy(Map cfg, Map project) {

@@ -434,6 +434,19 @@ test('trusted project registry supplies and pins the deployment handoff contract
   assert.match(pipeline, /Deployment environment does not match trusted project configuration/);
 });
 
+test('disabled trusted targets cannot reach approval or deployment handoff', () => {
+  const pipeline = readFileSync(pipelinePath, 'utf8');
+  assert.match(pipeline, /def deploymentRequested = deploymentExecutionEnabled\(cfg\.projectId as String\)/);
+  assert.match(pipeline, /deploymentEnabled = deploymentRequested && trustedSource\.targetEnabled == true/);
+  assert.match(pipeline, /trusted target .* is disabled in the central target registry/);
+  assert.match(pipeline, /config\/targets\/\$\{project\.deployment\.targetId\}\.yaml/);
+  assert.match(pipeline, /target\.enabled instanceof Boolean/);
+  const approval = pipeline.slice(pipeline.indexOf("stage('Manual approval')"), pipeline.indexOf("stage('Deployment handoff')"));
+  assert.match(approval, /deploymentEnabled &&/);
+  const handoff = pipeline.slice(pipeline.indexOf("stage('Deployment handoff')"), pipeline.indexOf('    post {'));
+  assert.match(handoff, /expression \{ deploymentEnabled \}/);
+});
+
 test('disabled deployment does not require deployment agent or contact deploy worker', () => {
   const pipeline = readFileSync(pipelinePath, 'utf8');
   const disabledStage = pipeline.slice(pipeline.indexOf("stage('Deployment disabled')"), pipeline.indexOf("stage('Manual approval')"));
