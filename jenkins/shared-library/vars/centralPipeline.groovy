@@ -599,11 +599,15 @@ private void runLoomrunCommand(Map profile, String key) {
       set -eu
       test -f apps/api/requirements.lock.txt
       test -f apps/api/pyproject.toml
+      test -f package.json
+      test -f package-lock.json
       test -f apps/web/package-lock.json
       mkdir -p .central-cicd
       python3 -m venv .central-cicd/api-venv
       .central-cicd/api-venv/bin/python -m pip install --disable-pip-version-check --no-cache-dir -r apps/api/requirements.lock.txt
-      .central-cicd/api-venv/bin/prisma generate --schema prisma/schema.prisma
+      npm ci --ignore-scripts --no-audit --no-fund
+      test -x node_modules/.bin/prisma
+      node_modules/.bin/prisma generate --schema prisma/schema.prisma
       (cd apps/web && npm ci --no-audit --no-fund)
       test ! -e .env
       cat > .central-cicd/loomrun-ci.env <<'EOF'
