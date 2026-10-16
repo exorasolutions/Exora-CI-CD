@@ -11,7 +11,7 @@ const targetDir = join(repoRoot, "config/targets");
 const projectDir = join(repoRoot, "config/projects");
 const serverPath = join(repoRoot, "deploy-worker/src/server.ts");
 
-test("loads every target config with unique disabled production targets", () => {
+test("loads every target config with explicit enablement", () => {
   const targets = loadTargets(targetDir);
   for (const id of [
     "cab-production",
@@ -29,14 +29,16 @@ test("loads every target config with unique disabled production targets", () => 
     assert.equal(target.environment, "production");
     assert.equal(target.rootPath.startsWith("/"), true);
     assert.equal(target.releaseRoot.startsWith(target.rootPath), true);
-    if (!["exora-production", "example-static-production"].includes(target.id)) {
+    if (target.id === "loomrun-production") {
+      assert.equal(target.enabled, true);
+    } else if (!["exora-production", "example-static-production"].includes(target.id)) {
       assert.equal(target.enabled, false, `${target.id} must remain disabled until adapter execution is reviewed`);
       assert.match(target.rootPath, /^\/srv\/apps\//);
     }
   }
 });
 
-test("new production targets match verified VPS runtime paths and remain disabled", () => {
+test("production targets match verified VPS runtime paths and explicit enablement", () => {
   const targets = loadTargets(targetDir);
   const expected = new Map([
     ["cab-production", {
@@ -88,12 +90,12 @@ test("new production targets match verified VPS runtime paths and remain disable
     assert.ok(target, `missing target ${id}`);
     assert.equal(target.rootPath, want.rootPath);
     assert.equal(target.adapter, want.adapter);
-    assert.equal(target.enabled, false);
+    assert.equal(target.enabled, target.id === "loomrun-production");
     assert.equal(target.runtime.composeProject, want.composeProject);
     assert.equal(target.runtime.composeWorkingDir, want.composeWorkingDir);
     assert.equal(target.runtime.composeFiles, want.composeFiles);
-    assert.equal(target.runtime.deploymentStatus, target.id === 'cab-production' ? 'compose-helper-installed-and-staging-validated' : 'disabled-compose-helper-not-production-installed');
-    assert.equal(target.runtime.composeHealthPolicy, target.id === 'cab-production' ? 'docker-healthcheck-required' : 'blocked-pending-verified-health-contract');
+    assert.equal(target.runtime.deploymentStatus, ['cab-production', 'loomrun-production'].includes(target.id) ? 'compose-helper-installed-and-staging-validated' : 'disabled-compose-helper-not-production-installed');
+    assert.equal(target.runtime.composeHealthPolicy, ['cab-production', 'loomrun-production'].includes(target.id) ? 'docker-healthcheck-required' : 'blocked-pending-verified-health-contract');
   }
 
   const loomrun = targets.get('loomrun-production');
@@ -109,8 +111,8 @@ test("new production targets match verified VPS runtime paths and remain disable
   assert.equal(loomrun.health.url, 'http://127.0.0.1:8107/ready');
   assert.equal(loomrun.health.expectedStatus, 200);
   assert.equal(loomrun.runtime.healthContract, 'loomrun-web-root-api-ready-v1');
-  assert.equal(loomrun.runtime.composeHealthPolicy, 'blocked-pending-verified-health-contract');
-  assert.equal(loomrun.runtime.deploymentStatus, 'disabled-compose-helper-not-production-installed');
+  assert.equal(loomrun.runtime.composeHealthPolicy, 'docker-healthcheck-required');
+  assert.equal(loomrun.runtime.deploymentStatus, 'compose-helper-installed-and-staging-validated');
 });
 
 test("project target references resolve to matching target configs", () => {

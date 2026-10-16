@@ -42,7 +42,7 @@ Deployment safety was verified from `/opt/central-cicd-worker/deploy-worker/.env
 | `cab-production` | `compose` | `/srv/apps/nammacabs` | `/srv/apps/nammacabs`; `compose.yaml,compose.prod.yaml` | Disabled; Compose adapter code implemented and unit-tested, helper not production-installed or approved. |
 | `exora-crm-production` | `compose` | `/srv/apps/exora_crm` | `/srv/apps/exora_crm`; `compose.yaml,compose.prod.yaml` | Disabled; Compose adapter code implemented and unit-tested, helper not production-installed or approved. |
 | `exora-shared-services-production` | `compose` | `/srv/apps/shared` | `/srv/apps/shared`; `compose.yaml,compose.prod.yaml` | Disabled; Compose adapter code implemented and unit-tested, helper not production-installed or approved. |
-| `loomrun-production` | `compose` | `/srv/apps/loomrun` | `/srv/apps/loomrun`; `compose.yaml,compose.prod.yaml` | Disabled; Compose adapter code implemented and unit-tested, helper not production-installed or approved. |
+| `loomrun-production` | `compose` | `/srv/apps/loomrun` | `/srv/apps/loomrun`; `compose.yaml,compose.prod.yaml` | Enabled in central target registry after helper/staging contract validation; execution still requires Jenkins and deploy-worker gates. |
 | `qlix-production` | `compose` | `/srv/apps/qlix` | `/srv/apps/qlix/deploy/server`; `compose.yaml` | Disabled; Compose adapter code implemented and unit-tested, helper not production-installed or approved. |
 | `sunkidz-production` | `compose` | `/srv/apps/sunkidz` | `/srv/apps/sunkidz`; `compose.yaml,compose.prod.yaml` | Disabled; Compose adapter code implemented and unit-tested, helper not production-installed or approved. |
 
@@ -54,13 +54,13 @@ The helper contract supports `validate`, `deploy`, and `rollback`; independently
 
 ### Loomrun production authorization prerequisites
 
-The tracked helper now recognizes `loomrun-production` as an allowed live-mutation scope, fixing the false unauthorized-target rejection. Production is still blocked by design because `config/targets/loomrun-production.yaml` remains disabled and reports `disabled-compose-helper-not-production-installed` plus `blocked-pending-verified-health-contract`.
+The tracked helper recognizes `loomrun-production` as an allowed live-mutation scope, and the target registry now records the verified helper-installed/staging-validated and Docker-healthcheck-required contract. Production execution still requires the Jenkins administrator execution flag, the project allowlist, the root-owned live-target opt-in, and the deploy-worker target to be enabled.
 
 The following steps are manual VPS changes and must not be performed by Jenkins or this repository checkout:
 
 1. Install the reviewed `deploy-worker/tools/central-compose-deploy` at `/usr/local/sbin/central-compose-deploy`, owned by `root:root`, mode `0755`, and verify its checksum against the reviewed central-CI/CD revision.
 2. Run the Loomrun disposable staging workflow using `deploy-worker/tools/prepare-loomrun-staging.ps1` (or its approved Linux equivalent), then run `stage-deploy`, health validation, failure/rollback, preservation, and cleanup checks against the isolated staging root and Docker project. Do not use `/srv/apps/loomrun` as staging.
-3. After independent review records those results, update the target contract to the approved helper-installed/staging-validated and Docker-healthcheck-required values; keep `enabled: false` until the deployment approval is granted.
+3. After independent review records those results, keep the target contract at the approved helper-installed/staging-validated and Docker-healthcheck-required values; deployment still requires the separate approval or automatic execution controls.
 4. Create `/etc/central-cicd/compose-live-targets` only when authorized, as a root-owned regular file with mode `0600`, containing exactly the approved IDs, for example `cab-production` and `loomrun-production`. The directory must be root-owned and not writable by group/other. This file alone is never sufficient.
 5. Keep deploy-worker and Jenkins deployment execution disabled until the artifact, target validation, approval, and rollback evidence are reviewed. No database migration or production container change is part of this procedure.
 

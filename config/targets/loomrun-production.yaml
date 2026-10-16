@@ -24,6 +24,6 @@ runtime:
   persistentMounts: /srv/apps/loomrun/.env:/app/.env:ro,/srv/apps/loomrun/data/storage:/loomrun-storage
   preservePolicy: preserve-storage-env-redis-shared-network
   healthContract: loomrun-web-root-api-ready-v1
-  deploymentStatus: disabled-compose-helper-not-production-installed
-  composeHealthPolicy: blocked-pending-verified-health-contract
-enabled: false
+  deploymentStatus: compose-helper-installed-and-staging-validated
+  composeHealthPolicy: docker-healthcheck-required
+enabled: true
