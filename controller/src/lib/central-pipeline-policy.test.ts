@@ -141,7 +141,10 @@ test('Loomrun source profile packages the verified Compose build context without
 test('Loomrun requires real CI checks and uses the explicit execution mode', () => {
   const project = YAML.parse(readFileSync(join(projectDir, 'loomrun.yaml'), 'utf8')).project;
   assert.equal(project.build.testsRequired, true);
+  assert.equal(project.build.agentLabel, 'loomrun-docker-build');
   const pipeline = readFileSync(pipelinePath, 'utf8');
+  assert.match(pipeline, /stage\('Validate build agent capabilities'\)/);
+  assert.match(pipeline, /validateBuildAgent\(cfg, profile\)/);
   assert.match(pipeline, /profile\.execution == 'loomrun-compose'/);
   assert.match(pipeline, /python3 -m venv \.central-cicd\/api-venv/);
   assert.match(pipeline, /pip install --disable-pip-version-check --no-cache-dir -r apps\/api\/requirements\.lock\.txt/);
@@ -154,6 +157,20 @@ test('Loomrun requires real CI checks and uses the explicit execution mode', () 
   assert.match(pipeline, /npm run lint/);
   assert.match(pipeline, /docker compose -f compose\.yaml -f compose\.prod\.yaml build --pull=false api web/);
   assert.doesNotMatch(pipeline, /node-npm-loomrun-compose-source-v1[\s\S]{0,200}install: true/);
+});
+
+test('Loomrun Compose builds fail closed without the isolated Docker agent contract', () => {
+  const pipeline = readFileSync(pipelinePath, 'utf8');
+  assert.match(pipeline, /Loomrun requires the dedicated \$\{requiredLabel\} Jenkins agent/);
+  assert.match(pipeline, /CENTRAL_CICD_BUILD_AGENT_CLASS/);
+  assert.match(pipeline, /loomrun-isolated-docker/);
+  assert.match(pipeline, /DOCKER_HOST/);
+  assert.ok(pipeline.includes('dockerHost ==~ /^unix:\\/\\/\\/run\\/user\\/[0-9]+\\/docker\\.sock$/'));
+  assert.match(pipeline, /command -v docker/);
+  assert.match(pipeline, /docker compose version/);
+  assert.match(pipeline, /docker info/);
+  assert.doesNotMatch(pipeline, /var\/run\/docker\.sock/);
+  assert.ok(pipeline.indexOf("stage('Validate build agent capabilities')") < pipeline.indexOf("stage('Install')"));
 });
 
 test('allows blank commit input but resolves and pins the trusted branch HEAD', () => {

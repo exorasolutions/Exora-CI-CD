@@ -8,7 +8,7 @@ project:
     branch: master
   build:
     profile: node-npm-loomrun-compose-source-v1
-    agentLabel: linux-build
+    agentLabel: loomrun-docker-build
     testsRequired: true
     timeoutMinutes: 45
   deployment:

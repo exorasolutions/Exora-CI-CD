@@ -11,7 +11,8 @@ directory.
 
 Required Jenkins concepts:
 - built-in node executors: 0
-- build agent label: `linux-build`
+- general build agent label: `linux-build` (non-Compose builds only)
+- Loomrun Compose build agent label: `loomrun-docker-build`
 - restricted production handoff agent label: `production-deploy`
 - one generic job: `central-cicd-build`
 - global shared library: `central-cicd-lib`
@@ -21,6 +22,22 @@ Required Jenkins concepts:
 - optional protected administrator environment variable `CENTRAL_CICD_CONFIG_CREDENTIALS_ID`, set to a Jenkins credential ID only if the central `exorasolutions/Exora-CI-CD` repository is private
 - optional protected administrator environment variable `CENTRAL_CICD_APP_GITHUB_CREDENTIALS_ID_YESHWANTH1127`, set to a Jenkins credential ID only if approved `yeshwanth1127` application repositories are private
 - protected administrator environment variable `CENTRAL_CICD_DEPLOYMENT_EXECUTION_ENABLED=false`
+
+The `loomrun-docker-build` node is a dedicated, isolated Jenkins agent for the
+Loomrun candidate image build. It must not be the production host and must not
+mount `/var/run/docker.sock` or any production Docker socket. Configure the
+Jenkins service account with a rootless Docker daemon and set these node-scoped
+environment values:
+
+- `CENTRAL_CICD_BUILD_AGENT_CLASS=loomrun-isolated-docker`
+- `DOCKER_HOST=unix:///run/user/<jenkins-uid>/docker.sock`
+
+Install the Docker CLI and Docker Compose v2 on that node, enable the rootless
+daemon for the Jenkins service account, and verify `docker info` succeeds as
+that account. The shared library checks all of these requirements before
+install, tests, or the Compose image build. If the node is absent or does not
+meet the contract, Jenkins fails with an actionable message and never reaches
+the Build stage.
 
 No application repository needs a Jenkinsfile.
 

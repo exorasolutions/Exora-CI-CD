@@ -39,6 +39,14 @@ def call(Map cfg = [:]) {
             }
           }
 
+          stage('Validate build agent capabilities') {
+            steps {
+              script {
+                validateBuildAgent(cfg, profile)
+              }
+            }
+          }
+
           stage('Install') {
             steps {
               script {
@@ -563,6 +571,31 @@ private void runInstall(Map profile) {
     return
   }
   sh profile.install
+}
+
+private void validateBuildAgent(Map cfg, Map profile) {
+  if (profile.execution != 'loomrun-compose') return
+
+  def requiredLabel = 'loomrun-docker-build'
+  if (cfg.agentLabel != requiredLabel) {
+    error("Loomrun requires the dedicated ${requiredLabel} Jenkins agent; refusing to run Compose builds on ${cfg.agentLabel ?: 'an unspecified agent'}.")
+  }
+
+  if ((env.CENTRAL_CICD_BUILD_AGENT_CLASS ?: '').trim() != 'loomrun-isolated-docker') {
+    error('Loomrun requires an administrator-configured isolated Docker build agent. Set CENTRAL_CICD_BUILD_AGENT_CLASS=loomrun-isolated-docker on the dedicated node.')
+  }
+
+  def dockerHost = (env.DOCKER_HOST ?: '').trim()
+  if (!(dockerHost ==~ /^unix:\/\/\/run\/user\/[0-9]+\/docker\.sock$/)) {
+    error('Loomrun requires a rootless per-agent Docker daemon via DOCKER_HOST=unix:///run/user/<jenkins-uid>/docker.sock; the default or production Docker socket is not allowed.')
+  }
+
+  sh '''
+    set -eu
+    command -v docker >/dev/null 2>&1 || { echo 'Loomrun build agent is missing the Docker CLI.' >&2; exit 1; }
+    docker compose version >/dev/null 2>&1 || { echo 'Loomrun build agent is missing Docker Compose v2.' >&2; exit 1; }
+    docker info >/dev/null 2>&1 || { echo 'Loomrun build agent cannot reach its isolated Docker daemon.' >&2; exit 1; }
+  '''
 }
 
 private void runTests(Map profile) {
