@@ -145,6 +145,7 @@ test('Loomrun requires real CI checks and uses the explicit execution mode', () 
   assert.match(pipeline, /profile\.execution == 'loomrun-compose'/);
   assert.match(pipeline, /python3 -m venv \.central-cicd\/api-venv/);
   assert.match(pipeline, /pip install --disable-pip-version-check --no-cache-dir -r apps\/api\/requirements\.lock\.txt/);
+  assert.match(pipeline, /pip install --disable-pip-version-check --no-cache-dir --no-deps -e apps\/api/);
   assert.match(pipeline, /export PATH="\$PWD\/\.central-cicd\/api-venv\/bin:\$PATH"/);
   assert.match(pipeline, /npm ci --ignore-scripts --no-audit --no-fund/);
   assert.match(pipeline, /node_modules\/.bin\/prisma generate --schema prisma\/schema\.prisma/);
