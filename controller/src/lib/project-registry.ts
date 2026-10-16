@@ -8,6 +8,8 @@ export const ProjectFile = z.object({
   project: z.object({
     id: z.string().regex(/^[a-z0-9][a-z0-9-]{1,62}$/),
     enabled: z.boolean().default(true),
+    // Optional Jenkins job override; absent projects retain the global fallback.
+    jenkinsJob: z.string().regex(/^[A-Za-z0-9_.-]+$/).optional(),
     github: z.object({
       owner: z.string().min(1),
       repo: z.string().min(1),
@@ -22,7 +24,7 @@ export const ProjectFile = z.object({
     }),
     deployment: z.object({
       mode: z.enum(['manual', 'automatic']),
-      adapter: z.enum(['pm2', 'systemd', 'static', 'compose', 'python', 'exora-production']),
+      adapter: z.enum(['pm2', 'systemd', 'static', 'compose', 'python', 'exora-production', 'exora-static']),
       targetId: z.string().min(1),
       environment: z.string().min(1).default('production')
     }),

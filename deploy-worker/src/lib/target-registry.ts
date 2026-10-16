@@ -1,13 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 import { z } from 'zod';
 
 const Target = z.object({
   id: z.string().min(1),
   projectId: z.string().min(1),
   environment: z.string().min(1),
-  adapter: z.enum(['pm2','systemd','static','compose','python','exora-production']),
+  adapter: z.enum(['pm2','systemd','static','compose','python','exora-production','exora-static']),
   rootPath: z.string().startsWith('/'),
   releaseRoot: z.string().startsWith('/'),
   currentPath: z.string().startsWith('/'),

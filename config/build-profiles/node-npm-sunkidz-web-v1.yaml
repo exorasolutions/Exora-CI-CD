@@ -1,0 +1,15 @@
+id: node-npm-sunkidz-web-v1
+version: 1
+runtime: node
+lockfileRequired: true
+monorepo: true
+artifactPath: .central-cicd/release
+packages:
+  - name: sunkidz-web
+    workingDir: sunkidz-web
+    lockfile: package-lock.json
+    install: npm ci
+    test: npm run lint
+    build: npm run build
+    artifactPath: dist
+    artifactTarget: web

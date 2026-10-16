@@ -11,8 +11,8 @@ directory.
 
 Required Jenkins concepts:
 - built-in node executors: 0
-- build agent label: `linux-build`
-- restricted production handoff agent label: `production-deploy`
+- universal build agent label: `linux-build` (native builds plus optional Docker Compose validation)
+- deployment handoff agent label: `linux-build` by default, or an explicitly configured restricted label
 - one generic job: `central-cicd-build`
 - global shared library: `central-cicd-lib`
 - global shared library path: `jenkins/shared-library`
@@ -21,6 +21,19 @@ Required Jenkins concepts:
 - optional protected administrator environment variable `CENTRAL_CICD_CONFIG_CREDENTIALS_ID`, set to a Jenkins credential ID only if the central `exorasolutions/Exora-CI-CD` repository is private
 - optional protected administrator environment variable `CENTRAL_CICD_APP_GITHUB_CREDENTIALS_ID_YESHWANTH1127`, set to a Jenkins credential ID only if approved `yeshwanth1127` application repositories are private
 - protected administrator environment variable `CENTRAL_CICD_DEPLOYMENT_EXECUTION_ENABLED=false`
+
+Loomrun does not require a dedicated Docker label. Its pipeline always runs the
+native web build and uses Docker Compose image validation when the `linux-build`
+agent has Docker CLI, Compose v2, and a reachable daemon. If those capabilities
+are unavailable, the native build remains the required artifact-producing path.
+If Docker is installed, set `DOCKER_HOST=unix:///run/user/<jenkins-uid>/docker.sock`
+for an isolated rootless daemon. The pipeline will not use the default socket;
+never mount `/var/run/docker.sock` from the production VPS into build jobs.
+
+The deployment handoff uses `deployAgentLabel` when provided and defaults to
+`linux-build`. This label selection does not bypass target authorization,
+approval, artifact verification, deploy-worker authentication, or live-mutation
+guards.
 
 No application repository needs a Jenkinsfile.
 

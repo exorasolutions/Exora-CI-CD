@@ -1,0 +1,25 @@
+id: qlix-production
+projectId: qlix
+environment: production
+adapter: compose
+rootPath: /srv/apps/qlix
+releaseRoot: /srv/apps/qlix/.central-cicd/releases
+currentPath: /srv/apps/qlix/deploy/server
+health:
+  type: none
+  timeoutMs: 10000
+runtime:
+  composeProject: qlix
+  composeWorkingDir: /srv/apps/qlix/deploy/server
+  composeFiles: /srv/apps/qlix/deploy/server/compose.yaml
+  composeServices: backend,frontend
+  builtServices: backend,frontend
+  healthServices: backend,frontend
+  containers: qlix-backend-1,qlix-frontend-1
+  networkMode: host
+  publicBindings: 127.0.0.1:4000,127.0.0.1:3000
+  persistentMounts: /srv/apps/qlix/backend-adk/.env:/app/backend-adk/.env:ro,/srv/apps/qlix/deploy/server/data:/app-data,/tmp:/tmp
+  preservePolicy: preserve-host-network-runner-provenance-secrets-ssh
+  deploymentStatus: disabled-compose-helper-not-production-installed
+  composeHealthPolicy: blocked-pending-verified-health-contract
+enabled: false

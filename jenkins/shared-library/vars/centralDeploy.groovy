@@ -39,11 +39,14 @@ def call(Map cfg = [:]) {
         withEnv(["DEPLOY_WORKER_URL=${workerUrl.replaceAll('/+$', '')}"]) {
             sh '''
                 set -eu
-                curl --fail-with-body --silent --show-error \
+                response=$(curl --silent --show-error --write-out '\nHTTP_STATUS=%{http_code}' \
                   -X POST "$DEPLOY_WORKER_URL/deploy" \
                   -H "Authorization: Bearer $DEPLOY_WORKER_TOKEN" \
                   -H "Content-Type: application/json" \
-                  --data-binary @.central-cicd-deploy-request.json
+                  --data-binary @.central-cicd-deploy-request.json)
+                printf '%s\n' "$response"
+                status=$(printf '%s\n' "$response" | sed -n 's/^HTTP_STATUS=//p' | tail -n 1)
+                test "$status" -ge 200 -a "$status" -lt 300
             '''
         }
     }

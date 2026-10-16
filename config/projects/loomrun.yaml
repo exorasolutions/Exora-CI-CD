@@ -1,0 +1,23 @@
+schemaVersion: 1
+project:
+  id: loomrun
+  enabled: true
+  github:
+    owner: yeshwanth1127
+    repo: loomrun
+    branch: master
+  build:
+    profile: node-npm-loomrun-compose-source-v1
+    agentLabel: linux-build
+    testsRequired: true
+    timeoutMinutes: 45
+  deployment:
+    mode: manual
+    adapter: compose
+    targetId: loomrun-production
+    environment: production
+  healthCheck:
+    type: http
+    url: http://127.0.0.1:8107/ready
+    expectedStatus: 200
+    timeoutMs: 10000

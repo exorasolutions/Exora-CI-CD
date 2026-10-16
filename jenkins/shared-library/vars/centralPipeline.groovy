@@ -1,9 +1,12 @@
 def call(Map cfg = [:]) {
   validatePipelineConfig(cfg)
   def profile = [:]
+  def trustedSource = [:]
   def artifactName = "${cfg.projectId}-${env.BUILD_NUMBER}.tar.gz"
   validateArtifactName(artifactName)
-  def deploymentEnabled = deploymentExecutionEnabled()
+  def deployLabel = cfg.deployAgentLabel ?: 'linux-build'
+  def deploymentRequested = deploymentExecutionEnabled(cfg.projectId as String)
+  def deploymentEnabled = false
 
   pipeline {
     agent none
@@ -19,6 +22,21 @@ def call(Map cfg = [:]) {
       stage('Build on isolated agent') {
         agent { label cfg.agentLabel ?: 'linux-build' }
         stages {
+          stage('Resolve application source') {
+            steps {
+              script {
+                trustedSource = loadTrustedProjectSource(cfg)
+                cfg.repository = trustedSource.repository
+                enforceProjectDeploymentPolicy(cfg)
+                deploymentEnabled = deploymentRequested && trustedSource.targetEnabled == true
+                if (deploymentRequested && !deploymentEnabled) {
+                  echo "Deployment execution skipped: trusted target ${cfg.targetId} is disabled in the central target registry."
+                }
+                cfg.commitSha = checkoutAndResolveCommit(cfg, trustedSource)
+              }
+            }
+          }
+
           stage('Load central build profile') {
             steps {
               script {
@@ -27,21 +45,10 @@ def call(Map cfg = [:]) {
             }
           }
 
-          stage('Checkout exact commit') {
+          stage('Validate build agent capabilities') {
             steps {
-              deleteDir()
-              checkout([
-                $class: 'GitSCM',
-                branches: [[name: cfg.commitSha]],
-                userRemoteConfigs: [appRepositoryRemoteConfig(cfg.repository as String)],
-                extensions: [[$class: 'CleanBeforeCheckout']]
-              ])
-              sh 'git rev-parse HEAD'
               script {
-                def actual = sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
-                if (actual != cfg.commitSha) {
-                  error("Checkout mismatch: expected ${cfg.commitSha}, got ${actual}")
-                }
+                validateBuildAgent(profile)
               }
             }
           }
@@ -89,7 +96,7 @@ def call(Map cfg = [:]) {
       stage('Deployment disabled') {
         when { expression { !deploymentEnabled } }
         steps {
-          echo 'Deployment execution skipped: central deployment execution flag is disabled.'
+          echo 'Deployment execution skipped: central deployment execution or trusted target enablement is disabled.'
           echo 'No deployment agent, deploy worker, or deployment adapter will be contacted.'
         }
       }
@@ -118,7 +125,7 @@ def call(Map cfg = [:]) {
         }
         steps {
           script {
-            node(cfg.deployAgentLabel ?: 'production-deploy') {
+            node(deployLabel) {
               deleteDir()
               unstash 'release-artifact'
               sh "sha256sum -c ${shellQuote("${artifactName}.sha256")}"
@@ -165,10 +172,23 @@ def call(Map cfg = [:]) {
 
 private void validatePipelineConfig(Map cfg) {
   requireMatch('projectId', cfg.projectId, /^[a-z0-9][a-z0-9-]{1,62}$/)
-  requireRepositoryUrl(cfg.repository)
-  requireMatch('commitSha', cfg.commitSha, /^[0-9a-fA-F]{40}$/)
+  if (cfg.repository != null && !(cfg.repository instanceof String)) {
+    error("Invalid repository: ${cfg.repository}")
+  }
+  if (cfg.repository instanceof String && cfg.repository.trim()) {
+    requireRepositoryUrl(cfg.repository)
+  }
+  if (cfg.commitSha != null && !(cfg.commitSha instanceof String)) {
+    error("Invalid commitSha: ${cfg.commitSha}")
+  }
+  def requestedCommitSha = (cfg.commitSha ?: '').trim()
+  if (requestedCommitSha && !(requestedCommitSha ==~ /^[0-9a-fA-F]{40}$/)) {
+    error("Invalid commitSha: ${cfg.commitSha}")
+  }
+  cfg.commitSha = requestedCommitSha
   requireMatch('buildProfile', cfg.buildProfile, /^[a-z0-9][a-z0-9-]{1,63}$/)
   if (cfg.agentLabel) requireMatch('agentLabel', cfg.agentLabel, /^[A-Za-z0-9_.-]{1,64}$/)
+  // Keep accepting legacy job input while ensuring it cannot select the handoff node.
   if (cfg.deployAgentLabel) requireMatch('deployAgentLabel', cfg.deployAgentLabel, /^[A-Za-z0-9_.-]{1,64}$/)
   if (cfg.deploymentMode && !['manual', 'automatic'].contains(cfg.deploymentMode)) {
     error("Invalid deploymentMode: ${cfg.deploymentMode}")
@@ -178,19 +198,158 @@ private void validatePipelineConfig(Map cfg) {
   enforceProjectDeploymentPolicy(cfg)
 }
 
+private Map loadTrustedProjectSource(Map cfg) {
+  def centralRepo = requireAdminEnv('CENTRAL_CICD_CONFIG_REPOSITORY')
+  def centralRef = requireAdminEnv('CENTRAL_CICD_CONFIG_REF')
+  requireCentralConfigRepositoryUrl(centralRepo)
+  requireMatch('centralConfigRef', centralRef, /^[0-9a-fA-F]{40}$/)
+
+  def configDir = ".central-cicd-project-${env.BUILD_TAG ?: env.BUILD_NUMBER}".replaceAll(/[^A-Za-z0-9_.-]/, '-')
+  def project
+  def targetEnabled
+  dir(configDir) {
+    deleteDir()
+    checkout([
+      $class: 'GitSCM',
+      branches: [[name: centralRef]],
+      userRemoteConfigs: [centralRepositoryRemoteConfig(centralRepo)],
+      extensions: [[$class: 'CleanBeforeCheckout']]
+    ])
+    def actual = sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+    if (actual != centralRef) {
+      error("Central project registry checkout mismatch: expected ${centralRef}, got ${actual}")
+    }
+    def projectFile = "config/projects/${cfg.projectId}.yaml"
+    if (!fileExists(projectFile)) {
+      error("Missing trusted project configuration: ${projectFile}")
+    }
+    def parsed = readYaml file: projectFile
+    if (!(parsed instanceof Map) || !(parsed.project instanceof Map)) {
+      error("Malformed trusted project configuration: ${projectFile}")
+    }
+    project = parsed.project
+
+    def targetFile = "config/targets/${project.deployment.targetId}.yaml"
+    if (!fileExists(targetFile)) {
+      error("Missing trusted deployment target configuration: ${targetFile}")
+    }
+    def target = readYaml file: targetFile
+    if (!(target instanceof Map) || target.id != project.deployment.targetId ||
+        target.projectId != project.id || target.environment != project.deployment.environment ||
+        target.adapter != project.deployment.adapter || !(target.enabled instanceof Boolean)) {
+      error("Malformed or mismatched trusted deployment target configuration: ${targetFile}")
+    }
+    targetEnabled = target.enabled
+  }
+
+  if (project.id != cfg.projectId) {
+    error("Trusted project id mismatch: expected ${cfg.projectId}, got ${project.id}")
+  }
+  applyTrustedDeploymentPolicy(cfg, project)
+  def github = project.github
+  if (!(github instanceof Map) || !(github.owner instanceof String) || !(github.repo instanceof String) || !(github.branch instanceof String)) {
+    error("Malformed trusted repository configuration for ${cfg.projectId}")
+  }
+  def repository = "https://github.com/${github.owner}/${github.repo}.git".toString()
+  requireRepositoryUrl(repository)
+  validateBranchName(github.branch as String)
+  if (cfg.repository instanceof String && cfg.repository.trim() &&
+      normaliseRepositoryUrl(cfg.repository as String) != normaliseRepositoryUrl(repository)) {
+    error("Repository does not match trusted project configuration for ${cfg.projectId}")
+  }
+  def trustedConfig = cfg.clone()
+  trustedConfig.repository = repository
+  enforceProjectDeploymentPolicy(trustedConfig)
+  return [repository: repository, branch: github.branch as String, targetEnabled: targetEnabled]
+}
+
+private void applyTrustedDeploymentPolicy(Map cfg, Map project) {
+  def deployment = project.deployment
+  if (!(deployment instanceof Map) ||
+      !(deployment.targetId instanceof String) || !deployment.targetId.trim() ||
+      !(deployment.adapter instanceof String) || !deployment.adapter.trim() ||
+      !(deployment.environment instanceof String) || !deployment.environment.trim()) {
+    error("Malformed trusted deployment configuration for ${cfg.projectId}")
+  }
+
+  def expectedTarget = deployment.targetId as String
+  def expectedAdapter = deployment.adapter as String
+  def expectedEnvironment = deployment.environment as String
+  if (!cfg.targetId) cfg.targetId = expectedTarget
+  if (!cfg.deploymentAdapter) cfg.deploymentAdapter = expectedAdapter
+  if (!cfg.environment) cfg.environment = expectedEnvironment
+
+  if (cfg.targetId != expectedTarget) {
+    error("Deployment target does not match trusted project configuration for ${cfg.projectId}")
+  }
+  if (cfg.deploymentAdapter != expectedAdapter) {
+    error("Deployment adapter does not match trusted project configuration for ${cfg.projectId}")
+  }
+  if (cfg.environment != expectedEnvironment) {
+    error("Deployment environment does not match trusted project configuration for ${cfg.projectId}")
+  }
+}
+
+private String checkoutAndResolveCommit(Map cfg, Map trustedSource) {
+  def requested = (cfg.commitSha ?: '').trim()
+  def checkoutRef = requested ?: "*/${trustedSource.branch}"
+  deleteDir()
+  checkout([
+    $class: 'GitSCM',
+    branches: [[name: checkoutRef]],
+    userRemoteConfigs: [appRepositoryRemoteConfig(trustedSource.repository as String)],
+    extensions: [[$class: 'CleanBeforeCheckout']]
+  ])
+  def actual = sh(script: 'git rev-parse HEAD', returnStdout: true).trim().toLowerCase()
+  if (!(actual ==~ /^[0-9a-f]{40}$/)) {
+    error("Checkout did not resolve to a full commit SHA: ${actual}")
+  }
+  if (requested && actual != requested.toLowerCase()) {
+    error("Checkout mismatch: expected ${requested}, got ${actual}")
+  }
+  return actual
+}
+
+private void validateBranchName(String branch) {
+  if (!(branch ==~ /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,254}$/) || branch.contains('..') || branch.endsWith('.') || branch.endsWith('.lock') || branch.contains('@{')) {
+    error("Invalid trusted project branch: ${branch}")
+  }
+}
+
+private String normaliseRepositoryUrl(String value) {
+  return value.trim().replaceFirst(/\.git$/, '').toLowerCase()
+}
+
 private void enforceProjectDeploymentPolicy(Map cfg) {
   if (cfg.projectId == 'exora') {
+    if (!(cfg.repository instanceof String) || !cfg.repository.trim()) return
     if (!(cfg.repository ==~ /^https:\/\/github\.com\/yeshwanth1127\/exora(\.git)?$/)) {
       error("Invalid Exora repository: ${cfg.repository}")
     }
-    if (cfg.buildProfile != 'node-npm-exora-monorepo-v1') {
+
+    def expectedTarget
+    def expectedAdapter
+
+    if (cfg.buildProfile == 'node-npm-static-site-v1') {
+      expectedTarget = 'exora-static'
+      expectedAdapter = 'exora-static'
+    } else if (cfg.buildProfile == 'node-npm-exora-monorepo-v1') {
+      expectedTarget = 'exora-production'
+      expectedAdapter = 'exora-production'
+    } else {
       error("Invalid Exora build profile: ${cfg.buildProfile}")
     }
-    if (cfg.targetId != 'exora-production') {
-      error("Invalid Exora deployment target: ${cfg.targetId}")
+
+    // Resolve missing values from the centrally approved profile mapping.
+    // Explicit, conflicting values are still rejected below.
+    if (!cfg.targetId) cfg.targetId = expectedTarget
+    if (!cfg.deploymentAdapter) cfg.deploymentAdapter = expectedAdapter
+
+    if (cfg.targetId != expectedTarget) {
+      error("Invalid Exora deployment target for ${cfg.buildProfile}: ${cfg.targetId}")
     }
-    if (cfg.deploymentAdapter != 'exora-production') {
-      error("Invalid Exora deployment adapter: ${cfg.deploymentAdapter}")
+    if (cfg.deploymentAdapter != expectedAdapter) {
+      error("Invalid Exora deployment adapter for ${cfg.buildProfile}: ${cfg.deploymentAdapter}")
     }
     if ((cfg.environment ?: 'production') != 'production') {
       error("Invalid Exora environment: ${cfg.environment}")
@@ -200,7 +359,21 @@ private void enforceProjectDeploymentPolicy(Map cfg) {
 
 private Map loadBuildProfile(Map cfg) {
   def id = cfg.buildProfile as String
-  def allowed = ['node-npm-v1', 'node-pnpm-v1', 'python-v1', 'node-npm-exora-monorepo-v1']
+  def allowed = [
+    'node-npm-v1',
+    'node-pnpm-v1',
+    'python-v1',
+    'node-npm-exora-monorepo-v1',
+    'node-npm-static-site-v1',
+    'node-npm-cab-monorepo-v1',
+    'node-npm-exora-crm-v1',
+    'node-npm-exora-shared-services-v1',
+    'node-npm-loomrun-compose-source-v1',
+    'node-npm-loomrun-web-v1',
+    'node-npm-qlix-compose-source-v1',
+    'node-npm-sunkidz-compose-source-v1',
+    'node-npm-sunkidz-web-v1'
+  ]
   if (!allowed.contains(id)) {
     error("Unknown centrally-approved build profile: ${id}")
   }
@@ -259,6 +432,16 @@ private Map validateBuildProfile(String expectedId, Object rawProfile) {
       error("Malformed build profile ${expectedId}: ${key} must be a non-empty string")
     }
   }
+  if (expectedId == 'node-npm-loomrun-compose-source-v1') {
+    if (profile.execution != 'loomrun-hybrid') {
+      error('Malformed Loomrun profile: execution must be loomrun-hybrid')
+    }
+    ['install', 'test', 'build'].each { key ->
+      if (profile.get(key) != "loomrun-hybrid-${key}") {
+        error("Malformed Loomrun profile: ${key} must use the approved execution command")
+      }
+    }
+  }
   return profile
 }
 
@@ -267,7 +450,16 @@ private void validateRuntimeProfileCombination(String profileId, String runtime)
     'node-npm-v1': 'node',
     'node-pnpm-v1': 'node',
     'python-v1': 'python',
-    'node-npm-exora-monorepo-v1': 'node'
+    'node-npm-exora-monorepo-v1': 'node',
+    'node-npm-static-site-v1': 'node',
+    'node-npm-cab-monorepo-v1': 'node',
+    'node-npm-exora-crm-v1': 'node',
+    'node-npm-exora-shared-services-v1': 'node',
+    'node-npm-loomrun-compose-source-v1': 'node',
+    'node-npm-loomrun-web-v1': 'node',
+    'node-npm-qlix-compose-source-v1': 'node',
+    'node-npm-sunkidz-compose-source-v1': 'node',
+    'node-npm-sunkidz-web-v1': 'node'
   ]
   if (!expectedRuntimeByProfile.containsKey(profileId)) {
     error("Unsupported build profile: ${profileId}")
@@ -279,7 +471,7 @@ private void validateRuntimeProfileCombination(String profileId, String runtime)
 }
 
 private void validateMonorepoProfile(String profileId, Map profile) {
-  if (profileId != 'node-npm-exora-monorepo-v1') {
+  if (!profileId.startsWith('node-npm-')) {
     error("Monorepo profile is not approved for ${profileId}")
   }
   if (!(profile.packages instanceof List) || profile.packages.isEmpty()) {
@@ -293,7 +485,8 @@ private void validateMonorepoProfile(String profileId, Map profile) {
       if (!pkg.containsKey(key)) error("Malformed build profile ${profileId}: package missing ${key}")
     }
     requireMatch('package.name', pkg.name, /^[a-z0-9][a-z0-9-]{0,63}$/)
-    if ((pkg.workingDir as String).contains('exora-crm') || (pkg.artifactTarget as String).contains('crm')) {
+    if (['node-npm-exora-monorepo-v1', 'node-npm-static-site-v1'].contains(profileId) &&
+        ((pkg.workingDir as String).contains('exora-crm') || (pkg.artifactTarget as String).contains('crm'))) {
       error('exora-crm is not an approved deployment component')
     }
     if (names.contains(pkg.name as String)) {
@@ -348,7 +541,7 @@ private void validateApprovedMonorepoCommand(String command, boolean required) {
     if (required) error('Required monorepo command is missing')
     return
   }
-  if (!['npm ci', 'npm test', 'npm run build'].contains(command)) {
+  if (!['npm ci', 'npm test', 'npm run build', 'npm run check', 'npm run lint'].contains(command)) {
     error("Unsupported monorepo command: ${command}")
   }
 }
@@ -389,6 +582,10 @@ private void enforceLockfilePolicy(Map profile) {
 }
 
 private void runInstall(Map profile) {
+  if (profile.execution == 'loomrun-hybrid') {
+    runLoomrunHybridCommand(profile, 'install')
+    return
+  }
   if (profile.monorepo == true) {
     runMonorepoCommand(profile, 'install')
     return
@@ -396,7 +593,16 @@ private void runInstall(Map profile) {
   sh profile.install
 }
 
+private void validateBuildAgent(Map profile) {
+  if (profile.execution != 'loomrun-hybrid') return
+  echo 'Loomrun uses native npm build output and opportunistic Docker Compose image validation when Docker is available.'
+}
+
 private void runTests(Map profile) {
+  if (profile.execution == 'loomrun-hybrid') {
+    runLoomrunHybridCommand(profile, 'test')
+    return
+  }
   if (profile.monorepo == true) {
     runMonorepoCommand(profile, 'test')
     return
@@ -405,11 +611,88 @@ private void runTests(Map profile) {
 }
 
 private void runBuild(Map profile) {
+  if (profile.execution == 'loomrun-hybrid') {
+    runLoomrunHybridCommand(profile, 'build')
+    return
+  }
   if (profile.monorepo == true) {
     runMonorepoCommand(profile, 'build')
     return
   }
   sh profile.build
+}
+
+private void runLoomrunHybridCommand(Map profile, String key) {
+  if (profile.id != 'node-npm-loomrun-compose-source-v1' || profile.execution != 'loomrun-hybrid') {
+    error("Unsupported explicit execution mode for ${profile.id}")
+  }
+
+  def commands = [
+    install: '''
+      set -eu
+      test -f apps/api/requirements.lock.txt
+      test -f apps/api/pyproject.toml
+      test -f package.json
+      test -f package-lock.json
+      test -f apps/web/package-lock.json
+      mkdir -p .central-cicd
+      python3 -m venv .central-cicd/api-venv
+      .central-cicd/api-venv/bin/python -m pip install --disable-pip-version-check --no-cache-dir -r apps/api/requirements.lock.txt
+      .central-cicd/api-venv/bin/python -m pip install --disable-pip-version-check --no-cache-dir --no-deps -e apps/api
+      export PATH="$PWD/.central-cicd/api-venv/bin:$PATH"
+      npm ci --ignore-scripts --no-audit --no-fund
+      test -x node_modules/.bin/prisma
+      node_modules/.bin/prisma generate --schema prisma/schema.prisma
+      (cd apps/web && npm ci --no-audit --no-fund)
+      test ! -e .env
+      cat > .central-cicd/loomrun-ci.env <<'EOF'
+DATABASE_URL=postgresql://ci:ci@127.0.0.1:1/ci
+REDIS_URL=redis://127.0.0.1:1/0
+SECRET_KEY=central-ci-only-not-production
+STORAGE_DIR=.central-cicd/ci-storage
+VITE_API_URL=http://127.0.0.1:8107
+VITE_API_PUBLIC_URL=http://127.0.0.1:8107
+EOF
+    ''',
+    test: '''
+      set -eu
+      test -f .central-cicd/loomrun-ci.env
+      test ! -e .env
+      cp .central-cicd/loomrun-ci.env .env
+      trap 'rm -f .env' EXIT
+      .central-cicd/api-venv/bin/python -m pytest apps/api/tests -q
+      (cd apps/web && npm run lint)
+    ''',
+    build: '''
+      set -eu
+      test -f .central-cicd/loomrun-ci.env
+      test ! -e .env
+      cp .central-cicd/loomrun-ci.env .env
+      trap 'rm -f .env' EXIT
+      (cd apps/web && npm run build)
+      test -f apps/web/dist/index.html
+      docker_host="${DOCKER_HOST:-}"
+      if printf '%s' "$docker_host" | grep -Eq '^unix:///run/user/[0-9]+/docker.sock$' && command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+        echo 'Loomrun Docker capability detected; running optional Compose image validation.'
+        docker compose -f compose.yaml -f compose.prod.yaml build --pull=false api web
+      else
+        echo 'Loomrun isolated Docker CLI, Compose, or daemon unavailable; using the native npm build artifact.'
+      fi
+      rm -rf .central-cicd/release
+      mkdir -p .central-cicd/release
+      tar --exclude=.git --exclude=.central-cicd --exclude=node_modules --exclude='*/node_modules' \\
+        --exclude=.env --exclude='.env.*' --exclude='*/.env' --exclude='*/.env.*' \\
+        --exclude=data --exclude='data/**' --exclude=__pycache__ --exclude='*/__pycache__' \\
+        --exclude='*.pyc' --exclude='*.pyo' --exclude=.pytest_cache --exclude='*/.pytest_cache' \\
+        --exclude=.ruff_cache --exclude='*/.ruff_cache' --exclude=.mypy_cache --exclude='*/.mypy_cache' \\
+        --exclude=.coverage --exclude='*/.coverage' --exclude=coverage --exclude='*/coverage' \\
+        --exclude=htmlcov --exclude='*/htmlcov' --exclude=.cache --exclude='*/.cache' \\
+        --exclude=.turbo --exclude='*/.turbo' --exclude=.next --exclude='*/.next' \\
+        -cf - compose.yaml compose.prod.yaml apps n8n prisma scripts package.json package-lock.json \\
+        | tar -C .central-cicd/release -xf -
+    '''
+  ]
+  sh commands[key]
 }
 
 private void runMonorepoCommand(Map profile, String key) {
@@ -533,12 +816,17 @@ private void validateArtifactName(String artifactName) {
   requireMatch('artifactName', artifactName, /^[A-Za-z0-9][A-Za-z0-9_.-]{0,120}\.tar\.gz$/)
 }
 
-private boolean deploymentExecutionEnabled() {
+private boolean deploymentExecutionEnabled(String projectId) {
   def enabled = (env.CENTRAL_CICD_DEPLOYMENT_EXECUTION_ENABLED ?: 'false').trim()
   if (!['true', 'false'].contains(enabled)) {
     error('Invalid administrator setting CENTRAL_CICD_DEPLOYMENT_EXECUTION_ENABLED. Expected true or false.')
   }
-  return enabled == 'true'
+  def rawProjects = (env.CENTRAL_CICD_AUTO_DEPLOY_PROJECTS ?: '').trim()
+  def projects = rawProjects ? rawProjects.split(',').collect { it.trim() }.findAll { it } : []
+  if (projects.any { !(it ==~ /^[a-z0-9][a-z0-9-]{0,62}$/) }) {
+    error('Invalid CENTRAL_CICD_AUTO_DEPLOY_PROJECTS. Use comma-separated project IDs.')
+  }
+  return enabled == 'true' && projects.contains(projectId)
 }
 
 private void requireRepositoryUrl(Object value) {
@@ -569,10 +857,14 @@ private Map centralRepositoryRemoteConfig(String url) {
 
 private Map appRepositoryRemoteConfig(String url) {
   def owner = githubOwner(url)
-  if (owner != 'yeshwanth1127') {
-    error("Unsupported application repository owner: ${owner}. Only yeshwanth1127 repositories are approved for this job.")
+  def credentialEnvByOwner = [
+    'yeshwanth1127': 'CENTRAL_CICD_APP_GITHUB_CREDENTIALS_ID_YESHWANTH1127',
+    'rvamsi201-vk': 'CENTRAL_CICD_APP_GITHUB_CREDENTIALS_ID_RVAMSI201_VK'
+  ]
+  if (!credentialEnvByOwner.containsKey(owner)) {
+    error("Unsupported application repository owner: ${owner}. Add an administrator-managed credential mapping before enabling this repository.")
   }
-  return gitRemoteConfig(url, optionalCredentialId('CENTRAL_CICD_APP_GITHUB_CREDENTIALS_ID_YESHWANTH1127'))
+  return gitRemoteConfig(url, optionalCredentialId(credentialEnvByOwner.get(owner) as String))
 }
 
 private Map gitRemoteConfig(String url, String credentialsId) {
@@ -623,6 +915,9 @@ private String adminEnvValue(String name) {
   }
   if (name == 'CENTRAL_CICD_APP_GITHUB_CREDENTIALS_ID_YESHWANTH1127') {
     return env.CENTRAL_CICD_APP_GITHUB_CREDENTIALS_ID_YESHWANTH1127
+  }
+  if (name == 'CENTRAL_CICD_APP_GITHUB_CREDENTIALS_ID_RVAMSI201_VK') {
+    return env.CENTRAL_CICD_APP_GITHUB_CREDENTIALS_ID_RVAMSI201_VK
   }
   if (name == 'CENTRAL_CICD_DEPLOY_ARTIFACT_STAGING_ROOT') {
     return env.CENTRAL_CICD_DEPLOY_ARTIFACT_STAGING_ROOT

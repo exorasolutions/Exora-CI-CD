@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
@@ -19,6 +19,7 @@ import {
   validateCommitSha,
   validateRepositoryUrl
 } from './build-profile-policy.js';
+import { ProjectFile } from './project-registry.js';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const profileDir = join(repoRoot, 'config/build-profiles');
@@ -26,6 +27,7 @@ const pipelinePath = join(repoRoot, 'jenkins/shared-library/vars/centralPipeline
 const deployPath = join(repoRoot, 'jenkins/shared-library/vars/centralDeploy.groovy');
 const jobTemplatePath = join(repoRoot, 'jenkins/job-templates/central-cicd-build.xml.template');
 const pythonPackageHelperPath = join(repoRoot, 'jenkins/shared-library/resources/scripts/package-python-source.py');
+const projectDir = join(repoRoot, 'config/projects');
 
 function assertArtifactOutput(path: string) {
   if (!existsSync(path)) throw new Error('missing artifact output');
@@ -48,6 +50,34 @@ test('loads and validates each centrally approved build profile', () => {
       assert.ok(profile.build);
     }
   }
+});
+
+test('loads every project config and maps each repository only once', () => {
+  const seenProjects = new Set<string>();
+  const seenRepos = new Set<string>();
+  const expectedProjects = new Set([
+    'cab',
+    'exora',
+    'exora-crm',
+    'exora-shared-services',
+    'loomrun',
+    'qlix',
+    'sunkidz'
+  ]);
+
+  for (const file of readdirSync(projectDir).filter((name) => /\.ya?ml$/i.test(name))) {
+    const parsed = ProjectFile.parse(YAML.parse(readFileSync(join(projectDir, file), 'utf8')));
+    const project = parsed.project;
+    assert.equal(seenProjects.has(project.id), false, `duplicate project id ${project.id}`);
+    seenProjects.add(project.id);
+    const repo = `${project.github.owner}/${project.github.repo}`.toLowerCase();
+    assert.equal(seenRepos.has(repo), false, `duplicate repository mapping ${repo}`);
+    seenRepos.add(repo);
+    assert.ok(approvedProfileIds.includes(project.build.profile as typeof approvedProfileIds[number]));
+    assert.equal(project.deployment.mode, 'manual');
+  }
+
+  for (const id of expectedProjects) assert.equal(seenProjects.has(id), true, `missing project ${id}`);
 });
 
 test('rejects unknown build profile id', () => {
@@ -75,6 +105,117 @@ test('validates full 40-character commit SHA only', () => {
   assert.throws(() => validateCommitSha('main'), /invalid commit sha/);
   assert.throws(() => validateCommitSha('0123456'), /invalid commit sha/);
   assert.throws(() => validateCommitSha('g123456789abcdef0123456789abcdef01234567'), /invalid commit sha/);
+});
+
+test('Loomrun source profile packages the verified Compose build context without secrets or data', () => {
+  const profile = parseBuildProfileYaml(
+    'node-npm-loomrun-compose-source-v1',
+    readFileSync(join(profileDir, 'node-npm-loomrun-compose-source-v1.yaml'), 'utf8')
+  );
+  assert.equal(profile.artifactPath, '.central-cicd/release');
+  assert.equal(profile.execution, 'loomrun-hybrid');
+  assert.equal(profile.install, 'loomrun-hybrid-install');
+  assert.equal(profile.test, 'loomrun-hybrid-test');
+  assert.equal(profile.build, 'loomrun-hybrid-build');
+  const pipeline = readFileSync(pipelinePath, 'utf8');
+  assert.match(pipeline, /compose\.yaml compose\.prod\.yaml apps n8n prisma scripts package\.json package-lock\.json/);
+  assert.match(pipeline, /--exclude=\.env/);
+  assert.match(pipeline, /--exclude=data/);
+  for (const generated of [
+    '__pycache__',
+    '.pytest_cache',
+    '.ruff_cache',
+    '.mypy_cache',
+    '.coverage',
+    'coverage',
+    'htmlcov',
+    '.cache',
+    '.turbo',
+    '.next'
+  ]) {
+    assert.match(pipeline, new RegExp(`--exclude=.*${generated.replace('.', '\\.')}`));
+  }
+  assert.doesNotMatch(pipeline, /--exclude=\.dockerignore/);
+});
+
+test('Loomrun requires real CI checks and uses the explicit execution mode', () => {
+  const project = YAML.parse(readFileSync(join(projectDir, 'loomrun.yaml'), 'utf8')).project;
+  assert.equal(project.build.testsRequired, true);
+  assert.equal(project.build.agentLabel, 'linux-build');
+  const pipeline = readFileSync(pipelinePath, 'utf8');
+  assert.match(pipeline, /stage\('Validate build agent capabilities'\)/);
+  assert.match(pipeline, /validateBuildAgent\(profile\)/);
+  assert.match(pipeline, /profile\.execution == 'loomrun-hybrid'/);
+  assert.match(pipeline, /python3 -m venv \.central-cicd\/api-venv/);
+  assert.match(pipeline, /pip install --disable-pip-version-check --no-cache-dir -r apps\/api\/requirements\.lock\.txt/);
+  assert.match(pipeline, /pip install --disable-pip-version-check --no-cache-dir --no-deps -e apps\/api/);
+  assert.match(pipeline, /export PATH="\$PWD\/\.central-cicd\/api-venv\/bin:\$PATH"/);
+  assert.match(pipeline, /npm ci --ignore-scripts --no-audit --no-fund/);
+  assert.match(pipeline, /node_modules\/.bin\/prisma generate --schema prisma\/schema\.prisma/);
+  assert.match(pipeline, /python -m pytest apps\/api\/tests -q/);
+  assert.match(pipeline, /npm ci --no-audit --no-fund/);
+  assert.match(pipeline, /npm run lint/);
+  assert.match(pipeline, /\(cd apps\/web && npm run build\)/);
+  assert.match(pipeline, /docker compose -f compose\.yaml -f compose\.prod\.yaml build --pull=false api web/);
+  assert.match(pipeline, /docker compose version/);
+  assert.match(pipeline, /docker info/);
+  assert.match(pipeline, /DOCKER_HOST/);
+  assert.match(pipeline, /unix:\/\/\/run\/user\/\[0-9\]\+\/docker\.sock/);
+  assert.match(pipeline, /using the native npm build artifact/);
+  assert.doesNotMatch(pipeline, /var\/run\/docker\.sock/);
+  assert.doesNotMatch(pipeline, /node-npm-loomrun-compose-source-v1[\s\S]{0,200}install: true/);
+});
+
+test('Loomrun hybrid builds do not require a dedicated Docker agent', () => {
+  const pipeline = readFileSync(pipelinePath, 'utf8');
+  assert.equal(YAML.parse(readFileSync(join(projectDir, 'loomrun.yaml'), 'utf8')).project.build.agentLabel, 'linux-build');
+  assert.match(pipeline, /Loomrun uses native npm build output/);
+  assert.doesNotMatch(pipeline, /loomrun-docker-build|CENTRAL_CICD_BUILD_AGENT_CLASS/);
+  assert.ok(pipeline.indexOf("stage('Validate build agent capabilities')") < pipeline.indexOf("stage('Install')"));
+});
+
+test('allows blank commit input but resolves and pins the trusted branch HEAD', () => {
+  const pipeline = readFileSync(pipelinePath, 'utf8');
+  assert.match(pipeline, /stage\('Resolve application source'\)/);
+  assert.match(pipeline, /loadTrustedProjectSource\(cfg\)/);
+  assert.match(pipeline, /cfg\.commitSha = checkoutAndResolveCommit\(cfg, trustedSource\)/);
+  assert.match(pipeline, /def requestedCommitSha = \(cfg\.commitSha \?: ''\)\.trim\(\)/);
+  assert.match(pipeline, /def checkoutRef = requested \?\: "\*\/\$\{trustedSource\.branch\}"/);
+  assert.match(pipeline, /git rev-parse HEAD/);
+  assert.match(pipeline, /return actual/);
+});
+
+test('whitespace-only commit input is treated as blank', () => {
+  const pipeline = readFileSync(pipelinePath, 'utf8');
+  assert.match(pipeline, /def requestedCommitSha = \(cfg\.commitSha \?: ''\)\.trim\(\)/);
+  assert.match(pipeline, /def requested = \(cfg\.commitSha \?: ''\)\.trim\(\)/);
+  assert.match(pipeline, /def checkoutRef = requested \?\: "\*\/\$\{trustedSource\.branch\}"/);
+});
+
+test('explicit commit input remains exact and cannot fall back to a branch', () => {
+  const pipeline = readFileSync(pipelinePath, 'utf8');
+  assert.match(pipeline, /if \(requested && actual != requested\.toLowerCase\(\)\)/);
+  assert.match(pipeline, /Checkout mismatch: expected \$\{requested\}, got \$\{actual\}/);
+  assert.match(pipeline, /if \(requestedCommitSha && !\(requestedCommitSha ==~ \/\^\[0-9a-fA-F\]\{40\}\$\//);
+});
+
+test('trusted project branch and repository are resolved before application checkout', () => {
+  const pipeline = readFileSync(pipelinePath, 'utf8');
+  const sourceStage = pipeline.slice(pipeline.indexOf("stage('Resolve application source')"), pipeline.indexOf("stage('Load central build profile')"));
+  assert.match(sourceStage, /loadTrustedProjectSource\(cfg\)/);
+  assert.match(sourceStage, /cfg\.repository = trustedSource\.repository/);
+  assert.match(sourceStage, /cfg\.commitSha = checkoutAndResolveCommit\(cfg, trustedSource\)/);
+  assert.match(pipeline, /Repository does not match trusted project configuration/);
+  assert.match(pipeline, /Missing trusted project configuration/);
+  assert.match(pipeline, /Invalid trusted project branch/);
+  assert.match(pipeline, /def repository = "https:\/\/github\.com\/\$\{github\.owner\}\/\$\{github\.repo\}\.git"\.toString\(\)/);
+});
+
+test('approval and worker handoff use the same resolved SHA', () => {
+  const pipeline = readFileSync(pipelinePath, 'utf8');
+  assert.match(pipeline, /Deploy \$\{cfg\.projectId\} @ \$\{cfg\.commitSha\}/);
+  assert.match(pipeline, /commitSha: cfg\.commitSha/);
+  assert.match(pipeline, /central-cicd result=.*sha=\$\{cfg\.commitSha\}/);
 });
 
 test('validates GitHub HTTPS repository URLs', () => {
@@ -265,7 +406,7 @@ test('deployment execution defaults disabled and is administrator-env controlled
   assert.throws(() => deploymentExecutionEnabledFromAdminEnv('yes'), /invalid deployment execution flag/);
 
   const pipeline = readFileSync(pipelinePath, 'utf8');
-  assert.match(pipeline, /private boolean deploymentExecutionEnabled\(\)/);
+  assert.match(pipeline, /private boolean deploymentExecutionEnabled\(String projectId\)/);
   assert.match(pipeline, /CENTRAL_CICD_DEPLOYMENT_EXECUTION_ENABLED/);
   assert.doesNotMatch(pipeline, /cfg\.deploymentExecutionEnabled/);
   assert.doesNotMatch(pipeline, /DEPLOYMENT_MODE.*CENTRAL_CICD_DEPLOYMENT_EXECUTION_ENABLED/s);
@@ -281,6 +422,40 @@ test('manual and automatic modes skip deployment while execution is disabled', (
   assert.match(pipeline, /stage\('Deployment handoff'\)[\s\S]*when \{\s*beforeAgent true\s*expression \{ deploymentEnabled \}\s*\}/);
 });
 
+test('trusted project registry supplies and pins the deployment handoff contract', () => {
+  const pipeline = readFileSync(pipelinePath, 'utf8');
+  assert.match(pipeline, /applyTrustedDeploymentPolicy\(cfg, project\)/);
+  assert.match(pipeline, /def deployment = project\.deployment/);
+  assert.match(pipeline, /if \(!cfg\.targetId\) cfg\.targetId = expectedTarget/);
+  assert.match(pipeline, /if \(!cfg\.deploymentAdapter\) cfg\.deploymentAdapter = expectedAdapter/);
+  assert.match(pipeline, /if \(!cfg\.environment\) cfg\.environment = expectedEnvironment/);
+  assert.match(pipeline, /Deployment target does not match trusted project configuration/);
+  assert.match(pipeline, /Deployment adapter does not match trusted project configuration/);
+  assert.match(pipeline, /Deployment environment does not match trusted project configuration/);
+});
+
+test('disabled trusted targets cannot reach approval or deployment handoff', () => {
+  const pipeline = readFileSync(pipelinePath, 'utf8');
+  assert.match(pipeline, /def deploymentRequested = deploymentExecutionEnabled\(cfg\.projectId as String\)/);
+  assert.match(pipeline, /deploymentEnabled = deploymentRequested && trustedSource\.targetEnabled == true/);
+  assert.match(pipeline, /trusted target .* is disabled in the central target registry/);
+  assert.match(pipeline, /config\/targets\/\$\{project\.deployment\.targetId\}\.yaml/);
+  assert.match(pipeline, /target\.enabled instanceof Boolean/);
+  const approval = pipeline.slice(pipeline.indexOf("stage('Manual approval')"), pipeline.indexOf("stage('Deployment handoff')"));
+  assert.match(approval, /deploymentEnabled &&/);
+  const handoff = pipeline.slice(pipeline.indexOf("stage('Deployment handoff')"), pipeline.indexOf('    post {'));
+  assert.match(handoff, /expression \{ deploymentEnabled \}/);
+});
+
+test('deployment handoff uses configured label and defaults to linux-build', () => {
+  const pipeline = readFileSync(pipelinePath, 'utf8');
+  const handoff = pipeline.slice(pipeline.indexOf("stage('Deployment handoff')"), pipeline.indexOf('    post {'));
+  assert.match(pipeline, /def deployLabel = cfg\.deployAgentLabel \?: 'linux-build'/);
+  assert.match(handoff, /node\(deployLabel\)/);
+  assert.doesNotMatch(handoff, /production-deploy/);
+  assert.match(readFileSync(jobTemplatePath, 'utf8'), /deployAgentLabel: 'linux-build'/);
+});
+
 test('disabled deployment does not require deployment agent or contact deploy worker', () => {
   const pipeline = readFileSync(pipelinePath, 'utf8');
   const disabledStage = pipeline.slice(pipeline.indexOf("stage('Deployment disabled')"), pipeline.indexOf("stage('Manual approval')"));
@@ -289,14 +464,21 @@ test('disabled deployment does not require deployment agent or contact deploy wo
   assert.doesNotMatch(disabledStage, /centralDeploy|DEPLOY_WORKER|curl/);
   assert.match(handoffStage, /beforeAgent true/);
   assert.doesNotMatch(handoffStage, /agent\s*\{/);
-  assert.match(handoffStage, /node\(cfg\.deployAgentLabel \?: 'production-deploy'\)/);
-  assert.ok(handoffStage.indexOf('expression { deploymentEnabled }') < handoffStage.indexOf('node(cfg.deployAgentLabel'));
+  assert.match(handoffStage, /node\(deployLabel\)/);
+  assert.ok(handoffStage.indexOf('expression { deploymentEnabled }') < handoffStage.indexOf('node(deployLabel)'));
   assert.match(handoffStage, /CENTRAL_CICD_DEPLOY_ARTIFACT_STAGING_ROOT/);
   assert.match(handoffStage, /centralDeploy/);
   const deploy = readFileSync(deployPath, 'utf8');
   assert.match(deploy, /CENTRAL_CICD_DEPLOY_WORKER_URL/);
   assert.match(deploy, /CENTRAL_CICD_DEPLOY_WORKER_TOKEN_CREDENTIALS_ID/);
   assert.match(deploy, /withCredentials/);
+});
+
+test('legacy deploy label input cannot select the production handoff node', () => {
+  const pipeline = readFileSync(pipelinePath, 'utf8');
+  assert.match(pipeline, /requireMatch\('deployAgentLabel'/);
+  assert.match(pipeline, /def deployLabel = cfg\.deployAgentLabel \?: 'linux-build'/);
+  assert.match(pipeline, /node\(deployLabel\)/);
 });
 
 test('central config uses administrator env and full SHA pin', () => {
@@ -324,8 +506,10 @@ test('checkout credential ids are administrator-managed and not webhook controll
   const jobTemplate = readFileSync(jobTemplatePath, 'utf8');
   assert.match(pipeline, /CENTRAL_CICD_CONFIG_CREDENTIALS_ID/);
   assert.match(pipeline, /CENTRAL_CICD_APP_GITHUB_CREDENTIALS_ID_YESHWANTH1127/);
+  assert.match(pipeline, /CENTRAL_CICD_APP_GITHUB_CREDENTIALS_ID_RVAMSI201_VK/);
   assert.match(pipeline, /credentialsId = credentialsId/);
-  assert.match(pipeline, /Only yeshwanth1127 repositories are approved/);
+  assert.match(pipeline, /credentialEnvByOwner/);
+  assert.match(pipeline, /Unsupported application repository owner/);
   assert.doesNotMatch(pipeline, /cfg\.[A-Za-z0-9_]*credentials/i);
   assert.doesNotMatch(jobTemplate, /CREDENTIALS_ID|credentialsId/);
 });
@@ -336,6 +520,8 @@ test('shared library pins Exora deployment parameters centrally', () => {
   assert.match(pipeline, /github\\.com\\\/yeshwanth1127\\\/exora/);
   assert.match(pipeline, /node-npm-exora-monorepo-v1/);
   assert.match(pipeline, /exora-production/);
+  assert.match(pipeline, /node-npm-static-site-v1/);
+  assert.match(pipeline, /exora-static/);
   assert.doesNotMatch(pipeline, /exora-crm.*targetId/s);
 });
 

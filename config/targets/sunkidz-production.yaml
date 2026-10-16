@@ -1,0 +1,24 @@
+id: sunkidz-production
+projectId: sunkidz
+environment: production
+adapter: compose
+rootPath: /srv/apps/sunkidz
+releaseRoot: /srv/apps/sunkidz/.central-cicd/releases
+currentPath: /srv/apps/sunkidz
+health:
+  type: none
+  timeoutMs: 10000
+runtime:
+  composeProject: sunkidz
+  composeWorkingDir: /srv/apps/sunkidz
+  composeFiles: /srv/apps/sunkidz/compose.yaml,/srv/apps/sunkidz/compose.prod.yaml
+  composeServices: web,api
+  builtServices: web,api
+  healthServices: web,api
+  containers: sunkidz-web-1,sunkidz-api-1
+  publicBindings: 127.0.0.1:8101->80,127.0.0.1:8104->8001
+  persistentMounts: /srv/apps/sunkidz/data/uploads:/app/uploads
+  preservePolicy: preserve-uploads-web-api-routes
+  deploymentStatus: disabled-compose-helper-not-production-installed
+  composeHealthPolicy: blocked-pending-verified-health-contract
+enabled: false

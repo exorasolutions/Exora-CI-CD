@@ -1,0 +1,30 @@
+id: loomrun-production
+projectId: loomrun
+environment: production
+adapter: compose
+rootPath: /srv/apps/loomrun
+releaseRoot: /srv/apps/loomrun/.central-cicd/releases
+currentPath: /srv/apps/loomrun
+health:
+  type: http
+  url: http://127.0.0.1:8107/ready
+  expectedStatus: 200
+  timeoutMs: 10000
+runtime:
+  composeProject: loomrun
+  composeWorkingDir: /srv/apps/loomrun
+  composeFiles: /srv/apps/loomrun/compose.yaml,/srv/apps/loomrun/compose.prod.yaml
+  composeServices: web,api,redis
+  builtServices: web,api
+  healthServices: web,api
+  containers: loomrun-web-1,loomrun-api-1,loomrun-redis-1
+  publicBindings: 127.0.0.1:8107->80
+  internalPorts: api:8002,redis:6379
+  networks: loomrun_default,shared
+  persistentMounts: /srv/apps/loomrun/.env:/app/.env:ro,/srv/apps/loomrun/data/storage:/loomrun-storage
+  preservePolicy: preserve-storage-env-redis-shared-network
+  candidateContextPolicy: loomrun-source-root-v1
+  healthContract: loomrun-web-root-api-ready-v1
+  deploymentStatus: compose-helper-installed-and-staging-validated
+  composeHealthPolicy: docker-healthcheck-required
+enabled: true

@@ -2,12 +2,11 @@ CREATE TABLE IF NOT EXISTS deployment_targets (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL,
   environment TEXT NOT NULL,
-  adapter TEXT NOT NULL CHECK (adapter IN ('static','pm2','systemd','compose','exora-production')),
+  adapter TEXT NOT NULL CHECK (adapter IN ('static','pm2','systemd','compose','exora-production','exora-static')),
   target_path TEXT NOT NULL,
   health_url TEXT,
   health_expected_status INTEGER NOT NULL DEFAULT 200,
-  enabled BOOLEAN NOT NULL DEFAULT FALSE,
-  UNIQUE(project_id, environment)
+  enabled BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 CREATE TABLE IF NOT EXISTS deployments (
