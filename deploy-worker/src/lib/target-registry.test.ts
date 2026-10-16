@@ -107,6 +107,7 @@ test("production targets match verified VPS runtime paths and explicit enablemen
   assert.equal(loomrun.runtime.internalPorts, 'api:8002,redis:6379');
   assert.equal(loomrun.runtime.networks, 'loomrun_default,shared');
   assert.equal(loomrun.runtime.persistentMounts, '/srv/apps/loomrun/.env:/app/.env:ro,/srv/apps/loomrun/data/storage:/loomrun-storage');
+  assert.equal(loomrun.runtime.candidateContextPolicy, 'loomrun-source-root-v1');
   assert.equal(loomrun.health.type, 'http');
   assert.equal(loomrun.health.url, 'http://127.0.0.1:8107/ready');
   assert.equal(loomrun.health.expectedStatus, 200);

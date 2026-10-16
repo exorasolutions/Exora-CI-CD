@@ -23,6 +23,7 @@ runtime:
   networks: loomrun_default,shared
   persistentMounts: /srv/apps/loomrun/.env:/app/.env:ro,/srv/apps/loomrun/data/storage:/loomrun-storage
   preservePolicy: preserve-storage-env-redis-shared-network
+  candidateContextPolicy: loomrun-source-root-v1
   healthContract: loomrun-web-root-api-ready-v1
   deploymentStatus: compose-helper-installed-and-staging-validated
   composeHealthPolicy: docker-healthcheck-required
