@@ -805,6 +805,21 @@ def prepare_loomrun_build_contexts(policy, release):
         fail("candidate release directory is missing or unsafe")
     release = release.resolve(strict=True)
 
+    # Central Jenkins artifacts package application files beneath
+    # .central-cicd/release/.  Unwrap that verified directory before
+    # validating the explicit Loomrun source build contexts.
+    wrapper = release / ".central-cicd"
+    nested = wrapper / "release"
+    if wrapper.exists():
+        if wrapper.is_symlink() or not wrapper.is_dir():
+            fail("candidate artifact wrapper is unsafe")
+        if nested.is_symlink() or not nested.is_dir():
+            fail("candidate nested release directory is missing or unsafe")
+        resolved_nested = nested.resolve(strict=True)
+        if release not in resolved_nested.parents:
+            fail("candidate nested release escapes extraction root")
+        release = resolved_nested
+
     for relative in [
         "compose.yaml",
         "compose.prod.yaml",

@@ -273,7 +273,7 @@ class LoomrunContextTests(unittest.TestCase):
 
     def test_production_commands_still_use_live_guard(self):
         module = helper_module()
-        module["approved_live_targets"] = lambda: set()
+        module["guard_live_mutation"].__globals__["approved_live_targets"] = lambda: set()
         self.assertIn("loomrun-production", module["LIVE_MUTATION_TARGETS"])
         with self.assertRaisesRegex(RuntimeError, "blocked"):
             module["guard_live_mutation"]("deploy", "loomrun-production")

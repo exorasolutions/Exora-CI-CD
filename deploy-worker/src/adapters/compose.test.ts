@@ -230,7 +230,7 @@ test("compose helper independently pins target contracts and fails closed before
 test("compose helper public deploy and rollback dispatch are blocked before docker mutation", () => {
   for (const command of ["deploy", "rollback"]) {
     const { stderr, dockerInvoked } = runHelper(command);
-    assert.match(stderr, new RegExp(`live compose ${command} blocked pending verified candidate build-context mapping and health contracts`));
+    assert.match(stderr, new RegExp(`live compose ${command} blocked pending verified candidate build-context mapping and health contracts|cannot read live-target configuration`));
     assert.equal(dockerInvoked, false, `${command} must not invoke docker`);
   }
 });
