@@ -455,8 +455,8 @@ test('disabled deployment does not require deployment agent or contact deploy wo
   assert.doesNotMatch(disabledStage, /centralDeploy|DEPLOY_WORKER|curl/);
   assert.match(handoffStage, /beforeAgent true/);
   assert.doesNotMatch(handoffStage, /agent\s*\{/);
-  assert.match(handoffStage, /node\(cfg\.deployAgentLabel \?: 'production-deploy'\)/);
-  assert.ok(handoffStage.indexOf('expression { deploymentEnabled }') < handoffStage.indexOf('node(cfg.deployAgentLabel'));
+  assert.match(handoffStage, /node\('production-deploy'\)/);
+  assert.ok(handoffStage.indexOf('expression { deploymentEnabled }') < handoffStage.indexOf("node('production-deploy')"));
   assert.match(handoffStage, /CENTRAL_CICD_DEPLOY_ARTIFACT_STAGING_ROOT/);
   assert.match(handoffStage, /centralDeploy/);
   const deploy = readFileSync(deployPath, 'utf8');

@@ -124,7 +124,7 @@ def call(Map cfg = [:]) {
         }
         steps {
           script {
-            node(cfg.deployAgentLabel ?: 'production-deploy') {
+            node('production-deploy') {
               deleteDir()
               unstash 'release-artifact'
               sh "sha256sum -c ${shellQuote("${artifactName}.sha256")}"
@@ -187,7 +187,9 @@ private void validatePipelineConfig(Map cfg) {
   cfg.commitSha = requestedCommitSha
   requireMatch('buildProfile', cfg.buildProfile, /^[a-z0-9][a-z0-9-]{1,63}$/)
   if (cfg.agentLabel) requireMatch('agentLabel', cfg.agentLabel, /^[A-Za-z0-9_.-]{1,64}$/)
-  if (cfg.deployAgentLabel) requireMatch('deployAgentLabel', cfg.deployAgentLabel, /^[A-Za-z0-9_.-]{1,64}$/)
+  if (cfg.deployAgentLabel && cfg.deployAgentLabel != 'production-deploy') {
+    error("Invalid deployAgentLabel: ${cfg.deployAgentLabel}. Production handoff requires production-deploy.")
+  }
   if (cfg.deploymentMode && !['manual', 'automatic'].contains(cfg.deploymentMode)) {
     error("Invalid deploymentMode: ${cfg.deploymentMode}")
   }
