@@ -605,6 +605,7 @@ private void runLoomrunCommand(Map profile, String key) {
       mkdir -p .central-cicd
       python3 -m venv .central-cicd/api-venv
       .central-cicd/api-venv/bin/python -m pip install --disable-pip-version-check --no-cache-dir -r apps/api/requirements.lock.txt
+      export PATH="$PWD/.central-cicd/api-venv/bin:$PATH"
       npm ci --ignore-scripts --no-audit --no-fund
       test -x node_modules/.bin/prisma
       node_modules/.bin/prisma generate --schema prisma/schema.prisma
