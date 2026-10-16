@@ -204,6 +204,7 @@ private Map loadTrustedProjectSource(Map cfg) {
 
   def configDir = ".central-cicd-project-${env.BUILD_TAG ?: env.BUILD_NUMBER}".replaceAll(/[^A-Za-z0-9_.-]/, '-')
   def project
+  def targetEnabled
   dir(configDir) {
     deleteDir()
     checkout([
@@ -225,22 +226,24 @@ private Map loadTrustedProjectSource(Map cfg) {
       error("Malformed trusted project configuration: ${projectFile}")
     }
     project = parsed.project
+
+    def targetFile = "config/targets/${project.deployment.targetId}.yaml"
+    if (!fileExists(targetFile)) {
+      error("Missing trusted deployment target configuration: ${targetFile}")
+    }
+    def target = readYaml file: targetFile
+    if (!(target instanceof Map) || target.id != project.deployment.targetId ||
+        target.projectId != project.id || target.environment != project.deployment.environment ||
+        target.adapter != project.deployment.adapter || !(target.enabled instanceof Boolean)) {
+      error("Malformed or mismatched trusted deployment target configuration: ${targetFile}")
+    }
+    targetEnabled = target.enabled
   }
 
   if (project.id != cfg.projectId) {
     error("Trusted project id mismatch: expected ${cfg.projectId}, got ${project.id}")
   }
   applyTrustedDeploymentPolicy(cfg, project)
-  def targetFile = "config/targets/${project.deployment.targetId}.yaml"
-  if (!fileExists(targetFile)) {
-    error("Missing trusted deployment target configuration: ${targetFile}")
-  }
-  def target = readYaml file: targetFile
-  if (!(target instanceof Map) || target.id != project.deployment.targetId ||
-      target.projectId != project.id || target.environment != project.deployment.environment ||
-      target.adapter != project.deployment.adapter || !(target.enabled instanceof Boolean)) {
-    error("Malformed or mismatched trusted deployment target configuration: ${targetFile}")
-  }
   def github = project.github
   if (!(github instanceof Map) || !(github.owner instanceof String) || !(github.repo instanceof String) || !(github.branch instanceof String)) {
     error("Malformed trusted repository configuration for ${cfg.projectId}")
@@ -255,7 +258,7 @@ private Map loadTrustedProjectSource(Map cfg) {
   def trustedConfig = cfg.clone()
   trustedConfig.repository = repository
   enforceProjectDeploymentPolicy(trustedConfig)
-  return [repository: repository, branch: github.branch as String, targetEnabled: target.enabled]
+  return [repository: repository, branch: github.branch as String, targetEnabled: targetEnabled]
 }
 
 private void applyTrustedDeploymentPolicy(Map cfg, Map project) {
