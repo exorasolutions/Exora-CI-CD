@@ -404,6 +404,16 @@ private Map validateBuildProfile(String expectedId, Object rawProfile) {
       error("Malformed build profile ${expectedId}: ${key} must be a non-empty string")
     }
   }
+  if (expectedId == 'node-npm-loomrun-compose-source-v1') {
+    if (profile.execution != 'loomrun-compose') {
+      error('Malformed Loomrun profile: execution must be loomrun-compose')
+    }
+    ['install', 'test', 'build'].each { key ->
+      if (profile.get(key) != "loomrun-compose-${key}") {
+        error("Malformed Loomrun profile: ${key} must use the approved execution command")
+      }
+    }
+  }
   return profile
 }
 
@@ -544,6 +554,10 @@ private void enforceLockfilePolicy(Map profile) {
 }
 
 private void runInstall(Map profile) {
+  if (profile.execution == 'loomrun-compose') {
+    runLoomrunCommand(profile, 'install')
+    return
+  }
   if (profile.monorepo == true) {
     runMonorepoCommand(profile, 'install')
     return
@@ -552,6 +566,10 @@ private void runInstall(Map profile) {
 }
 
 private void runTests(Map profile) {
+  if (profile.execution == 'loomrun-compose') {
+    runLoomrunCommand(profile, 'test')
+    return
+  }
   if (profile.monorepo == true) {
     runMonorepoCommand(profile, 'test')
     return
@@ -560,11 +578,74 @@ private void runTests(Map profile) {
 }
 
 private void runBuild(Map profile) {
+  if (profile.execution == 'loomrun-compose') {
+    runLoomrunCommand(profile, 'build')
+    return
+  }
   if (profile.monorepo == true) {
     runMonorepoCommand(profile, 'build')
     return
   }
   sh profile.build
+}
+
+private void runLoomrunCommand(Map profile, String key) {
+  if (profile.id != 'node-npm-loomrun-compose-source-v1' || profile.execution != 'loomrun-compose') {
+    error("Unsupported explicit execution mode for ${profile.id}")
+  }
+
+  def commands = [
+    install: '''
+      set -eu
+      test -f apps/api/requirements.lock.txt
+      test -f apps/api/pyproject.toml
+      test -f apps/web/package-lock.json
+      mkdir -p .central-cicd
+      python3 -m venv .central-cicd/api-venv
+      .central-cicd/api-venv/bin/python -m pip install --disable-pip-version-check --no-cache-dir -r apps/api/requirements.lock.txt
+      .central-cicd/api-venv/bin/prisma generate --schema prisma/schema.prisma
+      (cd apps/web && npm ci --no-audit --no-fund)
+      test ! -e .env
+      cat > .central-cicd/loomrun-ci.env <<'EOF'
+DATABASE_URL=postgresql://ci:ci@127.0.0.1:1/ci
+REDIS_URL=redis://127.0.0.1:1/0
+SECRET_KEY=central-ci-only-not-production
+STORAGE_DIR=.central-cicd/ci-storage
+VITE_API_URL=http://127.0.0.1:8107
+VITE_API_PUBLIC_URL=http://127.0.0.1:8107
+EOF
+    ''',
+    test: '''
+      set -eu
+      test -f .central-cicd/loomrun-ci.env
+      test ! -e .env
+      cp .central-cicd/loomrun-ci.env .env
+      trap 'rm -f .env' EXIT
+      .central-cicd/api-venv/bin/python -m pytest apps/api/tests -q
+      (cd apps/web && npm run lint)
+    ''',
+    build: '''
+      set -eu
+      test -f .central-cicd/loomrun-ci.env
+      test ! -e .env
+      cp .central-cicd/loomrun-ci.env .env
+      trap 'rm -f .env' EXIT
+      docker compose -f compose.yaml -f compose.prod.yaml build --pull=false api web
+      rm -rf .central-cicd/release
+      mkdir -p .central-cicd/release
+      tar --exclude=.git --exclude=.central-cicd --exclude=node_modules --exclude='*/node_modules' \\
+        --exclude=.env --exclude='.env.*' --exclude='*/.env' --exclude='*/.env.*' \\
+        --exclude=data --exclude='data/**' --exclude=__pycache__ --exclude='*/__pycache__' \\
+        --exclude='*.pyc' --exclude='*.pyo' --exclude=.pytest_cache --exclude='*/.pytest_cache' \\
+        --exclude=.ruff_cache --exclude='*/.ruff_cache' --exclude=.mypy_cache --exclude='*/.mypy_cache' \\
+        --exclude=.coverage --exclude='*/.coverage' --exclude=coverage --exclude='*/coverage' \\
+        --exclude=htmlcov --exclude='*/htmlcov' --exclude=.cache --exclude='*/.cache' \\
+        --exclude=.turbo --exclude='*/.turbo' --exclude=.next --exclude='*/.next' \\
+        -cf - compose.yaml compose.prod.yaml apps n8n prisma scripts package.json package-lock.json \\
+        | tar -C .central-cicd/release -xf -
+    '''
+  ]
+  sh commands[key]
 }
 
 private void runMonorepoCommand(Map profile, String key) {

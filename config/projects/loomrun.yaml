@@ -9,7 +9,7 @@ project:
   build:
     profile: node-npm-loomrun-compose-source-v1
     agentLabel: linux-build
-    testsRequired: false
+    testsRequired: true
     timeoutMinutes: 45
   deployment:
     mode: manual

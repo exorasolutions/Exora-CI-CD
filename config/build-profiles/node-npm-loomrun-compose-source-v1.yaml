@@ -2,7 +2,8 @@ id: node-npm-loomrun-compose-source-v1
 version: 1
 runtime: node
 lockfileRequired: false
-install: "true"
-test: "true"
-build: "rm -rf .central-cicd/release && mkdir -p .central-cicd/release && tar --exclude=.git --exclude=.central-cicd --exclude=node_modules --exclude='*/node_modules' --exclude=.env --exclude='.env.*' --exclude='*/.env' --exclude='*/.env.*' --exclude=data --exclude='data/**' --exclude=__pycache__ --exclude='*/__pycache__' --exclude='*.pyc' --exclude='*.pyo' --exclude=.pytest_cache --exclude='*/.pytest_cache' --exclude=.ruff_cache --exclude='*/.ruff_cache' --exclude=.mypy_cache --exclude='*/.mypy_cache' --exclude=.coverage --exclude='*/.coverage' --exclude=coverage --exclude='*/coverage' --exclude=htmlcov --exclude='*/htmlcov' --exclude=.cache --exclude='*/.cache' --exclude=.turbo --exclude='*/.turbo' --exclude=.next --exclude='*/.next' -cf - compose.yaml compose.prod.yaml apps n8n prisma scripts package.json package-lock.json | tar -C .central-cicd/release -xf -"
+execution: loomrun-compose
+install: loomrun-compose-install
+test: loomrun-compose-test
+build: loomrun-compose-build
 artifactPath: .central-cicd/release

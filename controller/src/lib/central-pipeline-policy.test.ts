@@ -113,9 +113,14 @@ test('Loomrun source profile packages the verified Compose build context without
     readFileSync(join(profileDir, 'node-npm-loomrun-compose-source-v1.yaml'), 'utf8')
   );
   assert.equal(profile.artifactPath, '.central-cicd/release');
-  assert.match(profile.build ?? '', /compose\.yaml compose\.prod\.yaml apps n8n prisma scripts package\.json package-lock\.json/);
-  assert.match(profile.build ?? '', /--exclude=\.env/);
-  assert.match(profile.build ?? '', /--exclude=data/);
+  assert.equal(profile.execution, 'loomrun-compose');
+  assert.equal(profile.install, 'loomrun-compose-install');
+  assert.equal(profile.test, 'loomrun-compose-test');
+  assert.equal(profile.build, 'loomrun-compose-build');
+  const pipeline = readFileSync(pipelinePath, 'utf8');
+  assert.match(pipeline, /compose\.yaml compose\.prod\.yaml apps n8n prisma scripts package\.json package-lock\.json/);
+  assert.match(pipeline, /--exclude=\.env/);
+  assert.match(pipeline, /--exclude=data/);
   for (const generated of [
     '__pycache__',
     '.pytest_cache',
@@ -128,9 +133,24 @@ test('Loomrun source profile packages the verified Compose build context without
     '.turbo',
     '.next'
   ]) {
-    assert.match(profile.build ?? '', new RegExp(`--exclude=.*${generated.replace('.', '\\.')}`));
+    assert.match(pipeline, new RegExp(`--exclude=.*${generated.replace('.', '\\.')}`));
   }
-  assert.doesNotMatch(profile.build ?? '', /--exclude=\.dockerignore/);
+  assert.doesNotMatch(pipeline, /--exclude=\.dockerignore/);
+});
+
+test('Loomrun requires real CI checks and uses the explicit execution mode', () => {
+  const project = YAML.parse(readFileSync(join(projectDir, 'loomrun.yaml'), 'utf8')).project;
+  assert.equal(project.build.testsRequired, true);
+  const pipeline = readFileSync(pipelinePath, 'utf8');
+  assert.match(pipeline, /profile\.execution == 'loomrun-compose'/);
+  assert.match(pipeline, /python3 -m venv \.central-cicd\/api-venv/);
+  assert.match(pipeline, /pip install --disable-pip-version-check --no-cache-dir -r apps\/api\/requirements\.lock\.txt/);
+  assert.match(pipeline, /prisma generate --schema prisma\/schema\.prisma/);
+  assert.match(pipeline, /python -m pytest apps\/api\/tests -q/);
+  assert.match(pipeline, /npm ci --no-audit --no-fund/);
+  assert.match(pipeline, /npm run lint/);
+  assert.match(pipeline, /docker compose -f compose\.yaml -f compose\.prod\.yaml build --pull=false api web/);
+  assert.doesNotMatch(pipeline, /node-npm-loomrun-compose-source-v1[\s\S]{0,200}install: true/);
 });
 
 test('allows blank commit input but resolves and pins the trusted branch HEAD', () => {
