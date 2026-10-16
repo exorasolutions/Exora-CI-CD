@@ -104,8 +104,8 @@ Create a restricted deployment account on the VPS, for example `exora-deploy`, a
 
 The required Jenkins labels are:
 
-- `linux-build` or another centrally approved build-agent label for non-Compose application builds.
-- `loomrun-docker-build` for Loomrun's isolated candidate Compose image build. This node must use a rootless per-agent Docker daemon and must not mount a production Docker socket.
+- `linux-build` or another centrally approved build-agent label for application builds.
+- Loomrun uses `linux-build`: it always creates the native web build artifact and opportunistically validates Compose images when Docker is available.
 - `production-deploy` only for a future reviewed deployment handoff. This label is not required while deployment execution is disabled.
 
 Before production deployment can be enabled, complete this checklist:

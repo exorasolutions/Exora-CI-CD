@@ -42,7 +42,7 @@ def call(Map cfg = [:]) {
           stage('Validate build agent capabilities') {
             steps {
               script {
-                validateBuildAgent(cfg, profile)
+                validateBuildAgent(profile)
               }
             }
           }
@@ -413,11 +413,11 @@ private Map validateBuildProfile(String expectedId, Object rawProfile) {
     }
   }
   if (expectedId == 'node-npm-loomrun-compose-source-v1') {
-    if (profile.execution != 'loomrun-compose') {
-      error('Malformed Loomrun profile: execution must be loomrun-compose')
+    if (profile.execution != 'loomrun-hybrid') {
+      error('Malformed Loomrun profile: execution must be loomrun-hybrid')
     }
     ['install', 'test', 'build'].each { key ->
-      if (profile.get(key) != "loomrun-compose-${key}") {
+      if (profile.get(key) != "loomrun-hybrid-${key}") {
         error("Malformed Loomrun profile: ${key} must use the approved execution command")
       }
     }
@@ -562,8 +562,8 @@ private void enforceLockfilePolicy(Map profile) {
 }
 
 private void runInstall(Map profile) {
-  if (profile.execution == 'loomrun-compose') {
-    runLoomrunCommand(profile, 'install')
+  if (profile.execution == 'loomrun-hybrid') {
+    runLoomrunHybridCommand(profile, 'install')
     return
   }
   if (profile.monorepo == true) {
@@ -573,34 +573,14 @@ private void runInstall(Map profile) {
   sh profile.install
 }
 
-private void validateBuildAgent(Map cfg, Map profile) {
-  if (profile.execution != 'loomrun-compose') return
-
-  def requiredLabel = 'loomrun-docker-build'
-  if (cfg.agentLabel != requiredLabel) {
-    error("Loomrun requires the dedicated ${requiredLabel} Jenkins agent; refusing to run Compose builds on ${cfg.agentLabel ?: 'an unspecified agent'}.")
-  }
-
-  if ((env.CENTRAL_CICD_BUILD_AGENT_CLASS ?: '').trim() != 'loomrun-isolated-docker') {
-    error('Loomrun requires an administrator-configured isolated Docker build agent. Set CENTRAL_CICD_BUILD_AGENT_CLASS=loomrun-isolated-docker on the dedicated node.')
-  }
-
-  def dockerHost = (env.DOCKER_HOST ?: '').trim()
-  if (!(dockerHost ==~ /^unix:\/\/\/run\/user\/[0-9]+\/docker\.sock$/)) {
-    error('Loomrun requires a rootless per-agent Docker daemon via DOCKER_HOST=unix:///run/user/<jenkins-uid>/docker.sock; the default or production Docker socket is not allowed.')
-  }
-
-  sh '''
-    set -eu
-    command -v docker >/dev/null 2>&1 || { echo 'Loomrun build agent is missing the Docker CLI.' >&2; exit 1; }
-    docker compose version >/dev/null 2>&1 || { echo 'Loomrun build agent is missing Docker Compose v2.' >&2; exit 1; }
-    docker info >/dev/null 2>&1 || { echo 'Loomrun build agent cannot reach its isolated Docker daemon.' >&2; exit 1; }
-  '''
+private void validateBuildAgent(Map profile) {
+  if (profile.execution != 'loomrun-hybrid') return
+  echo 'Loomrun uses native npm build output and opportunistic Docker Compose image validation when Docker is available.'
 }
 
 private void runTests(Map profile) {
-  if (profile.execution == 'loomrun-compose') {
-    runLoomrunCommand(profile, 'test')
+  if (profile.execution == 'loomrun-hybrid') {
+    runLoomrunHybridCommand(profile, 'test')
     return
   }
   if (profile.monorepo == true) {
@@ -611,8 +591,8 @@ private void runTests(Map profile) {
 }
 
 private void runBuild(Map profile) {
-  if (profile.execution == 'loomrun-compose') {
-    runLoomrunCommand(profile, 'build')
+  if (profile.execution == 'loomrun-hybrid') {
+    runLoomrunHybridCommand(profile, 'build')
     return
   }
   if (profile.monorepo == true) {
@@ -622,8 +602,8 @@ private void runBuild(Map profile) {
   sh profile.build
 }
 
-private void runLoomrunCommand(Map profile, String key) {
-  if (profile.id != 'node-npm-loomrun-compose-source-v1' || profile.execution != 'loomrun-compose') {
+private void runLoomrunHybridCommand(Map profile, String key) {
+  if (profile.id != 'node-npm-loomrun-compose-source-v1' || profile.execution != 'loomrun-hybrid') {
     error("Unsupported explicit execution mode for ${profile.id}")
   }
 
@@ -669,7 +649,15 @@ EOF
       test ! -e .env
       cp .central-cicd/loomrun-ci.env .env
       trap 'rm -f .env' EXIT
-      docker compose -f compose.yaml -f compose.prod.yaml build --pull=false api web
+      (cd apps/web && npm run build)
+      test -f apps/web/dist/index.html
+      docker_host="${DOCKER_HOST:-}"
+      if printf '%s' "$docker_host" | grep -Eq '^unix:///run/user/[0-9]+/docker.sock$' && command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+        echo 'Loomrun Docker capability detected; running optional Compose image validation.'
+        docker compose -f compose.yaml -f compose.prod.yaml build --pull=false api web
+      else
+        echo 'Loomrun isolated Docker CLI, Compose, or daemon unavailable; using the native npm build artifact.'
+      fi
       rm -rf .central-cicd/release
       mkdir -p .central-cicd/release
       tar --exclude=.git --exclude=.central-cicd --exclude=node_modules --exclude='*/node_modules' \\

@@ -27,7 +27,7 @@ export type BuildProfile = {
   test?: string;
   build?: string;
   artifactPath: string;
-  execution?: 'loomrun-compose';
+  execution?: 'loomrun-hybrid';
   packages?: MonorepoPackage[];
 };
 
@@ -95,8 +95,8 @@ export function validateBuildProfile(expectedId: string, raw: unknown): BuildPro
       throw new Error(`Malformed build profile ${expectedId}: ${key} must be a non-empty string`);
     }
   }
-  if (expectedId === 'node-npm-loomrun-compose-source-v1' && profile.execution !== 'loomrun-compose') {
-    throw new Error(`Malformed build profile ${expectedId}: execution must be loomrun-compose`);
+  if (expectedId === 'node-npm-loomrun-compose-source-v1' && profile.execution !== 'loomrun-hybrid') {
+    throw new Error(`Malformed build profile ${expectedId}: execution must be loomrun-hybrid`);
   }
   if (expectedId !== 'node-npm-loomrun-compose-source-v1' && 'execution' in profile) {
     throw new Error(`Malformed build profile ${expectedId}: execution is not supported`);

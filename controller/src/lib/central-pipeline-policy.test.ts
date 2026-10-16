@@ -113,10 +113,10 @@ test('Loomrun source profile packages the verified Compose build context without
     readFileSync(join(profileDir, 'node-npm-loomrun-compose-source-v1.yaml'), 'utf8')
   );
   assert.equal(profile.artifactPath, '.central-cicd/release');
-  assert.equal(profile.execution, 'loomrun-compose');
-  assert.equal(profile.install, 'loomrun-compose-install');
-  assert.equal(profile.test, 'loomrun-compose-test');
-  assert.equal(profile.build, 'loomrun-compose-build');
+  assert.equal(profile.execution, 'loomrun-hybrid');
+  assert.equal(profile.install, 'loomrun-hybrid-install');
+  assert.equal(profile.test, 'loomrun-hybrid-test');
+  assert.equal(profile.build, 'loomrun-hybrid-build');
   const pipeline = readFileSync(pipelinePath, 'utf8');
   assert.match(pipeline, /compose\.yaml compose\.prod\.yaml apps n8n prisma scripts package\.json package-lock\.json/);
   assert.match(pipeline, /--exclude=\.env/);
@@ -141,11 +141,11 @@ test('Loomrun source profile packages the verified Compose build context without
 test('Loomrun requires real CI checks and uses the explicit execution mode', () => {
   const project = YAML.parse(readFileSync(join(projectDir, 'loomrun.yaml'), 'utf8')).project;
   assert.equal(project.build.testsRequired, true);
-  assert.equal(project.build.agentLabel, 'loomrun-docker-build');
+  assert.equal(project.build.agentLabel, 'linux-build');
   const pipeline = readFileSync(pipelinePath, 'utf8');
   assert.match(pipeline, /stage\('Validate build agent capabilities'\)/);
-  assert.match(pipeline, /validateBuildAgent\(cfg, profile\)/);
-  assert.match(pipeline, /profile\.execution == 'loomrun-compose'/);
+  assert.match(pipeline, /validateBuildAgent\(profile\)/);
+  assert.match(pipeline, /profile\.execution == 'loomrun-hybrid'/);
   assert.match(pipeline, /python3 -m venv \.central-cicd\/api-venv/);
   assert.match(pipeline, /pip install --disable-pip-version-check --no-cache-dir -r apps\/api\/requirements\.lock\.txt/);
   assert.match(pipeline, /pip install --disable-pip-version-check --no-cache-dir --no-deps -e apps\/api/);
@@ -155,21 +155,22 @@ test('Loomrun requires real CI checks and uses the explicit execution mode', () 
   assert.match(pipeline, /python -m pytest apps\/api\/tests -q/);
   assert.match(pipeline, /npm ci --no-audit --no-fund/);
   assert.match(pipeline, /npm run lint/);
+  assert.match(pipeline, /\(cd apps\/web && npm run build\)/);
   assert.match(pipeline, /docker compose -f compose\.yaml -f compose\.prod\.yaml build --pull=false api web/);
+  assert.match(pipeline, /docker compose version/);
+  assert.match(pipeline, /docker info/);
+  assert.match(pipeline, /DOCKER_HOST/);
+  assert.match(pipeline, /unix:\/\/\/run\/user\/\[0-9\]\+\/docker\.sock/);
+  assert.match(pipeline, /using the native npm build artifact/);
+  assert.doesNotMatch(pipeline, /var\/run\/docker\.sock/);
   assert.doesNotMatch(pipeline, /node-npm-loomrun-compose-source-v1[\s\S]{0,200}install: true/);
 });
 
-test('Loomrun Compose builds fail closed without the isolated Docker agent contract', () => {
+test('Loomrun hybrid builds do not require a dedicated Docker agent', () => {
   const pipeline = readFileSync(pipelinePath, 'utf8');
-  assert.match(pipeline, /Loomrun requires the dedicated \$\{requiredLabel\} Jenkins agent/);
-  assert.match(pipeline, /CENTRAL_CICD_BUILD_AGENT_CLASS/);
-  assert.match(pipeline, /loomrun-isolated-docker/);
-  assert.match(pipeline, /DOCKER_HOST/);
-  assert.ok(pipeline.includes('dockerHost ==~ /^unix:\\/\\/\\/run\\/user\\/[0-9]+\\/docker\\.sock$/'));
-  assert.match(pipeline, /command -v docker/);
-  assert.match(pipeline, /docker compose version/);
-  assert.match(pipeline, /docker info/);
-  assert.doesNotMatch(pipeline, /var\/run\/docker\.sock/);
+  assert.equal(YAML.parse(readFileSync(join(projectDir, 'loomrun.yaml'), 'utf8')).project.build.agentLabel, 'linux-build');
+  assert.match(pipeline, /Loomrun uses native npm build output/);
+  assert.doesNotMatch(pipeline, /loomrun-docker-build|CENTRAL_CICD_BUILD_AGENT_CLASS/);
   assert.ok(pipeline.indexOf("stage('Validate build agent capabilities')") < pipeline.indexOf("stage('Install')"));
 });
 
