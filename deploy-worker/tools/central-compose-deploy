@@ -24,8 +24,9 @@ LOCK_ROOT = Path("/run/lock/central-cicd-compose")
 MAX_FILES = 50000
 MAX_BYTES = 1024 * 1024 * 1024
 # Maximum scope for live Compose mutation in this deployment phase.
-# Actual permission requires a separate root-owned opt-in file.
-LIVE_MUTATION_TARGETS = {"cab-production"}
+# Actual permission requires a separate root-owned opt-in file, and each target
+# must still pass the independently pinned contract below before Docker runs.
+LIVE_MUTATION_TARGETS = {"cab-production", "loomrun-production"}
 LIVE_TARGETS_CONFIG = Path("/etc/central-cicd/compose-live-targets")
 STAGING_ROOT_ENV = "CENTRAL_CICD_STAGING_ROOT"
 STAGING_TARGET_PREFIX = "loomrun-staging-"

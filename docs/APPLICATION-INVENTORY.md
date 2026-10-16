@@ -50,7 +50,19 @@ Deployment safety was verified from `/opt/central-cicd-worker/deploy-worker/.env
 
 The worker accepts only approved target IDs, repositories, production roots, compose working directories, compose files, compose project names, and service allowlists recorded in target YAML. It writes a deployment policy under the worker work root and invokes only the restricted `central-compose-deploy` helper through `sudo -n`. Artifact tar metadata is validated before helper dispatch; links, traversal, absolute paths, and unsafe entries are rejected.
 
-The helper contract supports `validate`, `deploy`, and `rollback`; independently pinned target contracts; private artifact staging; per-target locking; immutable recovery references; `docker compose config --quiet`; and fail-closed rollback reporting. Live `docker compose build` and `docker compose up -d --no-deps` remain blocked until candidate build contexts and app-level health contracts are proven for each target. It intentionally avoids `docker compose down`, broad pruning, wildcard container deletion, gateway restarts, database migrations, and volume deletion.
+The helper contract supports `validate`, `deploy`, and `rollback`; independently pinned target contracts; private artifact staging; per-target locking; immutable recovery references; `docker compose config --quiet`; and fail-closed rollback reporting. The root-owned `/etc/central-cicd/compose-live-targets` opt-in may name only the explicitly scoped `cab-production` and `loomrun-production` targets, but opt-in alone never authorizes a deployment: the target policy must also prove the candidate build-context, staging, health, and preservation contracts. Live `docker compose build` and `docker compose up -d --no-deps` remain blocked until those contracts are proven for each target. It intentionally avoids `docker compose down`, broad pruning, wildcard container deletion, gateway restarts, database migrations, and volume deletion.
+
+### Loomrun production authorization prerequisites
+
+The tracked helper now recognizes `loomrun-production` as an allowed live-mutation scope, fixing the false unauthorized-target rejection. Production is still blocked by design because `config/targets/loomrun-production.yaml` remains disabled and reports `disabled-compose-helper-not-production-installed` plus `blocked-pending-verified-health-contract`.
+
+The following steps are manual VPS changes and must not be performed by Jenkins or this repository checkout:
+
+1. Install the reviewed `deploy-worker/tools/central-compose-deploy` at `/usr/local/sbin/central-compose-deploy`, owned by `root:root`, mode `0755`, and verify its checksum against the reviewed central-CI/CD revision.
+2. Run the Loomrun disposable staging workflow using `deploy-worker/tools/prepare-loomrun-staging.ps1` (or its approved Linux equivalent), then run `stage-deploy`, health validation, failure/rollback, preservation, and cleanup checks against the isolated staging root and Docker project. Do not use `/srv/apps/loomrun` as staging.
+3. After independent review records those results, update the target contract to the approved helper-installed/staging-validated and Docker-healthcheck-required values; keep `enabled: false` until the deployment approval is granted.
+4. Create `/etc/central-cicd/compose-live-targets` only when authorized, as a root-owned regular file with mode `0600`, containing exactly the approved IDs, for example `cab-production` and `loomrun-production`. The directory must be root-owned and not writable by group/other. This file alone is never sufficient.
+5. Keep deploy-worker and Jenkins deployment execution disabled until the artifact, target validation, approval, and rollback evidence are reviewed. No database migration or production container change is part of this procedure.
 
 ## Jenkins Job Mapping
 

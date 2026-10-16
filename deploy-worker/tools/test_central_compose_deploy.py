@@ -274,10 +274,40 @@ class LoomrunContextTests(unittest.TestCase):
     def test_production_commands_still_use_live_guard(self):
         module = helper_module()
         module["approved_live_targets"] = lambda: set()
-        with self.assertRaisesRegex(RuntimeError, "not permitted"):
+        self.assertIn("loomrun-production", module["LIVE_MUTATION_TARGETS"])
+        with self.assertRaisesRegex(RuntimeError, "blocked"):
             module["guard_live_mutation"]("deploy", "loomrun-production")
         with self.assertRaisesRegex(RuntimeError, "blocked"):
             module["guard_live_mutation"]("rollback", "cab-production")
+
+    def test_loomrun_requires_verified_contract_after_live_opt_in(self):
+        module = helper_module()
+        module["guard_live_mutation"].__globals__["approved_live_targets"] = lambda: {"loomrun-production"}
+        self.assertIsNone(module["guard_live_mutation"]("deploy", "loomrun-production"))
+
+        disabled = {
+            "targetId": "loomrun-production",
+            "projectId": "loomrun",
+            "targetRoot": "/srv/apps/loomrun",
+            "composeProject": "loomrun",
+            "composeWorkingDir": "/srv/apps/loomrun",
+            "composeFiles": ["/srv/apps/loomrun/compose.yaml", "/srv/apps/loomrun/compose.prod.yaml"],
+            "composeServices": ["web", "api", "redis"],
+            "builtServices": ["web", "api"],
+            "healthServices": ["web", "api"],
+            "containers": ["loomrun-web-1", "loomrun-api-1", "loomrun-redis-1"],
+            "persistentMounts": "/srv/apps/loomrun/.env:/app/.env:ro,/srv/apps/loomrun/data/storage:/loomrun-storage",
+            "publicBindings": "127.0.0.1:8107->80",
+            "networks": "loomrun_default,shared",
+            "internalPorts": "api:8002,redis:6379",
+            "preservePolicy": "preserve-storage-env-redis-shared-network",
+            "candidateContextPolicy": "loomrun-source-root-v1",
+            "healthContract": "loomrun-web-root-api-ready-v1",
+            "deploymentStatus": "disabled-compose-helper-not-production-installed",
+            "composeHealthPolicy": "blocked-pending-verified-health-contract",
+        }
+        with self.assertRaisesRegex(RuntimeError, "not approved for live helper execution"):
+            module["validate_approved_contract"](disabled)
 
 
 if __name__ == "__main__":
