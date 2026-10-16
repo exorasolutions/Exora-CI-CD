@@ -4,6 +4,7 @@ def call(Map cfg = [:]) {
   def trustedSource = [:]
   def artifactName = "${cfg.projectId}-${env.BUILD_NUMBER}.tar.gz"
   validateArtifactName(artifactName)
+  def deployLabel = cfg.deployAgentLabel ?: 'linux-build'
   def deploymentRequested = deploymentExecutionEnabled(cfg.projectId as String)
   def deploymentEnabled = false
 
@@ -124,7 +125,7 @@ def call(Map cfg = [:]) {
         }
         steps {
           script {
-            node('production-deploy') {
+            node(deployLabel) {
               deleteDir()
               unstash 'release-artifact'
               sh "sha256sum -c ${shellQuote("${artifactName}.sha256")}"

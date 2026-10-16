@@ -12,7 +12,7 @@ directory.
 Required Jenkins concepts:
 - built-in node executors: 0
 - universal build agent label: `linux-build` (native builds plus optional Docker Compose validation)
-- restricted production handoff agent label: `production-deploy`
+- deployment handoff agent label: `linux-build` by default, or an explicitly configured restricted label
 - one generic job: `central-cicd-build`
 - global shared library: `central-cicd-lib`
 - global shared library path: `jenkins/shared-library`
@@ -29,6 +29,11 @@ are unavailable, the native build remains the required artifact-producing path.
 If Docker is installed, set `DOCKER_HOST=unix:///run/user/<jenkins-uid>/docker.sock`
 for an isolated rootless daemon. The pipeline will not use the default socket;
 never mount `/var/run/docker.sock` from the production VPS into build jobs.
+
+The deployment handoff uses `deployAgentLabel` when provided and defaults to
+`linux-build`. This label selection does not bypass target authorization,
+approval, artifact verification, deploy-worker authentication, or live-mutation
+guards.
 
 No application repository needs a Jenkinsfile.
 

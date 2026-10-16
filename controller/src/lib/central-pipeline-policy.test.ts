@@ -447,6 +447,15 @@ test('disabled trusted targets cannot reach approval or deployment handoff', () 
   assert.match(handoff, /expression \{ deploymentEnabled \}/);
 });
 
+test('deployment handoff uses configured label and defaults to linux-build', () => {
+  const pipeline = readFileSync(pipelinePath, 'utf8');
+  const handoff = pipeline.slice(pipeline.indexOf("stage('Deployment handoff')"), pipeline.indexOf('    post {'));
+  assert.match(pipeline, /def deployLabel = cfg\.deployAgentLabel \?: 'linux-build'/);
+  assert.match(handoff, /node\(deployLabel\)/);
+  assert.doesNotMatch(handoff, /production-deploy/);
+  assert.match(readFileSync(jobTemplatePath, 'utf8'), /deployAgentLabel: 'linux-build'/);
+});
+
 test('disabled deployment does not require deployment agent or contact deploy worker', () => {
   const pipeline = readFileSync(pipelinePath, 'utf8');
   const disabledStage = pipeline.slice(pipeline.indexOf("stage('Deployment disabled')"), pipeline.indexOf("stage('Manual approval')"));
@@ -455,8 +464,8 @@ test('disabled deployment does not require deployment agent or contact deploy wo
   assert.doesNotMatch(disabledStage, /centralDeploy|DEPLOY_WORKER|curl/);
   assert.match(handoffStage, /beforeAgent true/);
   assert.doesNotMatch(handoffStage, /agent\s*\{/);
-  assert.match(handoffStage, /node\('production-deploy'\)/);
-  assert.ok(handoffStage.indexOf('expression { deploymentEnabled }') < handoffStage.indexOf("node('production-deploy')"));
+  assert.match(handoffStage, /node\(deployLabel\)/);
+  assert.ok(handoffStage.indexOf('expression { deploymentEnabled }') < handoffStage.indexOf('node(deployLabel)'));
   assert.match(handoffStage, /CENTRAL_CICD_DEPLOY_ARTIFACT_STAGING_ROOT/);
   assert.match(handoffStage, /centralDeploy/);
   const deploy = readFileSync(deployPath, 'utf8');
@@ -468,8 +477,8 @@ test('disabled deployment does not require deployment agent or contact deploy wo
 test('legacy deploy label input cannot select the production handoff node', () => {
   const pipeline = readFileSync(pipelinePath, 'utf8');
   assert.match(pipeline, /requireMatch\('deployAgentLabel'/);
-  assert.match(pipeline, /node\('production-deploy'\)/);
-  assert.doesNotMatch(pipeline, /node\(cfg\.deployAgentLabel/);
+  assert.match(pipeline, /def deployLabel = cfg\.deployAgentLabel \?: 'linux-build'/);
+  assert.match(pipeline, /node\(deployLabel\)/);
 });
 
 test('central config uses administrator env and full SHA pin', () => {

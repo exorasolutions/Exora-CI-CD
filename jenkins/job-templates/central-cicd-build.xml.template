@@ -28,7 +28,7 @@ centralPipeline(
   commitSha: params.COMMIT_SHA,
   buildProfile: params.BUILD_PROFILE,
   agentLabel: params.AGENT_LABEL,
-  deployAgentLabel: 'production-deploy',
+  deployAgentLabel: 'linux-build',
   testsRequired: params.TESTS_REQUIRED,
   deploymentMode: params.DEPLOYMENT_MODE,
   deploymentAdapter: params.DEPLOYMENT_ADAPTER,

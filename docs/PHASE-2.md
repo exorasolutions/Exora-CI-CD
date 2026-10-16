@@ -14,7 +14,7 @@
 - Artifacts are checksummed, archived and stashed by Jenkins.
 - Basic manual approval is included.
 - Deployment execution is centrally feature-flagged off by default through Jenkins administrator configuration.
-- While disabled, deployment handoff does not request the `production-deploy` agent and does not contact the deploy worker.
+- While disabled, deployment handoff does not request the configured deployment agent and does not contact the deploy worker.
 - Real deployment is still deliberately disabled in Phase 2.
 
 ## Why one generic Jenkins job?

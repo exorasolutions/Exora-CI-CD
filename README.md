@@ -90,7 +90,7 @@ The production target registration is `config/targets/exora-production.yaml`. It
 
 Deployment execution remains disabled by configuration. The shared pipeline reads only the Jenkins administrator-managed `CENTRAL_CICD_DEPLOYMENT_EXECUTION_ENABLED` environment variable and defaults to `false`. `DEPLOYMENT_MODE=automatic` only selects approval behavior after deployment is otherwise eligible; it is not permission to deploy and cannot enable execution by itself.
 
-When execution is disabled, the pipeline logs that deployment was skipped, does not request the `production-deploy` agent, does not call the deploy worker, and does not execute deployment adapters. Packaging or archiving an artifact must not be interpreted as a successful deployment.
+When execution is disabled, the pipeline logs that deployment was skipped, does not request the configured deployment agent, does not call the deploy worker, and does not execute deployment adapters. Packaging or archiving an artifact must not be interpreted as a successful deployment.
 
 Future controlled deployment tests require these protected Jenkins administrator settings:
 
@@ -106,7 +106,7 @@ The required Jenkins labels are:
 
 - `linux-build` or another centrally approved build-agent label for application builds.
 - Loomrun uses `linux-build`: it always creates the native web build artifact and opportunistically validates Compose images when Docker is available.
-- `production-deploy` only for a future reviewed deployment handoff. This label is not required while deployment execution is disabled.
+- `linux-build` for application builds and, by default, deployment handoff. A separately configured restricted deployment label may be used when required by infrastructure.
 
 Before production deployment can be enabled, complete this checklist:
 
