@@ -465,6 +465,13 @@ test('disabled deployment does not require deployment agent or contact deploy wo
   assert.match(deploy, /withCredentials/);
 });
 
+test('legacy deploy label input cannot select the production handoff node', () => {
+  const pipeline = readFileSync(pipelinePath, 'utf8');
+  assert.match(pipeline, /requireMatch\('deployAgentLabel'/);
+  assert.match(pipeline, /node\('production-deploy'\)/);
+  assert.doesNotMatch(pipeline, /node\(cfg\.deployAgentLabel/);
+});
+
 test('central config uses administrator env and full SHA pin', () => {
   const pipeline = readFileSync(pipelinePath, 'utf8');
   const jobTemplate = readFileSync(jobTemplatePath, 'utf8');
