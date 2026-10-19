@@ -29,4 +29,3 @@ packages:
       - migrations
       - scripts
       - test
-      - exora_crm
