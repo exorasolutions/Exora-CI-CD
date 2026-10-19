@@ -92,9 +92,9 @@ test("production targets match verified VPS runtime paths and explicit enablemen
     assert.equal(target.runtime.composeProject, want.composeProject);
     assert.equal(target.runtime.composeWorkingDir, want.composeWorkingDir);
     assert.equal(target.runtime.composeFiles, want.composeFiles);
-    const liveComposeTargets = ['cab-production', 'loomrun-production'];
-    assert.equal(target.runtime.deploymentStatus, liveComposeTargets.includes(target.id) ? 'compose-helper-installed-and-staging-validated' : target.id === 'nomi-production' ? 'dry-run-only-pending-runtime-inventory' : 'disabled-compose-helper-not-production-installed');
-    assert.equal(target.runtime.composeHealthPolicy, ['cab-production', 'loomrun-production'].includes(target.id) ? 'docker-healthcheck-required' : 'blocked-pending-verified-health-contract');
+    const liveComposeTargets = ['cab-production', 'loomrun-production', 'nomi-production'];
+    assert.equal(target.runtime.deploymentStatus, liveComposeTargets.includes(target.id) ? 'compose-helper-installed-and-staging-validated' : 'disabled-compose-helper-not-production-installed');
+    assert.equal(target.runtime.composeHealthPolicy, ['cab-production', 'loomrun-production', 'nomi-production'].includes(target.id) ? 'docker-healthcheck-required' : 'blocked-pending-verified-health-contract');
   }
 
   const loomrun = targets.get('loomrun-production');

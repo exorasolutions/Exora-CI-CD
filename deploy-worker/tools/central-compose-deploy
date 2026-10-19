@@ -26,7 +26,7 @@ MAX_BYTES = 1024 * 1024 * 1024
 # Maximum scope for live Compose mutation in this deployment phase.
 # Actual permission requires a separate root-owned opt-in file, and each target
 # must still pass the independently pinned contract below before Docker runs.
-LIVE_MUTATION_TARGETS = {"cab-production", "loomrun-production"}
+LIVE_MUTATION_TARGETS = {"cab-production", "loomrun-production", "nomi-production"}
 LIVE_TARGETS_CONFIG = Path("/etc/central-cicd/compose-live-targets")
 STAGING_ROOT_ENV = "CENTRAL_CICD_STAGING_ROOT"
 STAGING_TARGET_PREFIX = "loomrun-staging-"
@@ -35,6 +35,7 @@ PRODUCTION_ROOTS = {value["targetRoot"] for value in {
     "exora-crm-production": {"targetRoot": "/srv/apps/exora_crm"},
     "exora-shared-services-production": {"targetRoot": "/srv/apps/shared"},
     "loomrun-production": {"targetRoot": "/srv/apps/loomrun"},
+    "nomi-production": {"targetRoot": "/srv/apps/nomi"},
     "qlix-production": {"targetRoot": "/srv/apps/qlix"},
     "sunkidz-production": {"targetRoot": "/srv/apps/sunkidz"},
 }.values()}
@@ -105,6 +106,22 @@ APPROVED_TARGETS = {
         "preservePolicy": "preserve-storage-env-redis-shared-network",
         "candidateContextPolicy": "loomrun-source-root-v1",
         "healthContract": "loomrun-web-root-api-ready-v1",
+    },
+    "nomi-production": {
+        "projectId": "nomi",
+        "targetRoot": "/srv/apps/nomi",
+        "composeProject": "nomi",
+        "composeWorkingDir": "/srv/apps/nomi",
+        "composeFiles": ["/srv/apps/nomi/compose.yaml"],
+        "composeServices": ["nomi"],
+        "builtServices": ["nomi"],
+        "healthServices": ["nomi"],
+        "containers": ["nomi"],
+        "publicBindings": "127.0.0.1:3002->3000",
+        "persistentMounts": "/srv/apps/nomi/data/uploads:/app/data/uploads",
+        "preservePolicy": "preserve-nomi-uploads-external-postgres",
+        "candidateContextPolicy": "nomi-next-source-v1",
+        "healthContract": "nomi-node-root-http-v1",
     },
     "qlix-production": {
         "projectId": "qlix",
@@ -841,6 +858,58 @@ def prepare_loomrun_build_contexts(policy, release):
     }
 
 
+def prepare_nomi_build_contexts(policy, release):
+    """Create a pinned Nomi Next.js candidate build context."""
+    if policy.get("targetId") != "nomi-production" or policy.get("projectId") != "nomi":
+        fail("candidate artifact mapping is not approved for this compose target")
+    if policy.get("candidateContextPolicy") != "nomi-next-source-v1":
+        fail("candidate artifact lacks the approved Nomi context policy")
+
+    release = Path(release)
+    if release.is_symlink() or not release.is_dir():
+        fail("candidate release directory is missing or unsafe")
+    release = release.resolve(strict=True)
+    wrapper = release / ".central-cicd"
+    nested = wrapper / "release"
+    if wrapper.exists():
+        if wrapper.is_symlink() or not wrapper.is_dir() or nested.is_symlink() or not nested.is_dir():
+            fail("candidate artifact wrapper is unsafe")
+        resolved_nested = nested.resolve(strict=True)
+        if release not in resolved_nested.parents:
+            fail("candidate nested release escapes extraction root")
+        release = resolved_nested
+
+    for relative in ["middleware.ts", "package.json", "package-lock.json", "next.config.ts", "postcss.config.mjs", "tsconfig.json"]:
+        _required_release_path(release, relative)
+    for relative in ["app", "components", "lib", "prisma"]:
+        _required_release_path(release, relative, directory=True)
+    for item in release.rglob("*"):
+        if item.is_symlink():
+            fail(f"candidate build context contains a symlink: {item.relative_to(release)}")
+
+    dockerfile = release / "Dockerfile.central-cicd"
+    dockerfile.write_text("\n".join([
+        "FROM node:20-bookworm-slim",
+        "RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*",
+        "WORKDIR /app",
+        "ENV NEXT_TELEMETRY_DISABLED=1",
+        "COPY package.json package-lock.json ./",
+        "COPY prisma ./prisma",
+        "RUN npm ci --include=dev",
+        "COPY app ./app",
+        "COPY components ./components",
+        "COPY lib ./lib",
+        "COPY middleware.ts next.config.ts postcss.config.mjs tsconfig.json ./",
+        "RUN npx prisma generate && npm run build",
+        "ENV NODE_ENV=production",
+        "EXPOSE 3000",
+        '''HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 CMD node -e 'require("http").get("http://127.0.0.1:3000/",r=>process.exit(r.statusCode<500?0:1)).on("error",()=>process.exit(1))' ''',
+        "CMD [\"npm\", \"run\", \"start\", \"--\", \"-p\", \"3000\", \"--hostname\", \"0.0.0.0\"]",
+    ]) + "\n")
+    os.chmod(dockerfile, 0o644)
+    return {"nomi": {"context": str(release), "dockerfile": dockerfile.name}}
+
+
 def prepare_build_contexts(policy, release):
     """Dispatch candidate preparation by explicit project-specific policy."""
     target_id = policy.get("targetId")
@@ -848,6 +917,8 @@ def prepare_build_contexts(policy, release):
         return prepare_cab_build_contexts(policy, release)
     if target_id == "loomrun-production" or (isinstance(target_id, str) and target_id.startswith(STAGING_TARGET_PREFIX)):
         return prepare_loomrun_build_contexts(policy, release)
+    if target_id == "nomi-production":
+        return prepare_nomi_build_contexts(policy, release)
     fail("candidate artifact mapping is not approved for this compose target")
 
 

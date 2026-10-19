@@ -109,6 +109,13 @@ const APPROVED_COMPOSE_TARGETS: Record<string, {
     composeWorkingDir: "/srv/apps/loomrun",
     composeFiles: ["/srv/apps/loomrun/compose.yaml", "/srv/apps/loomrun/compose.prod.yaml"]
   },
+  "nomi-production": {
+    projectId: "nomi",
+    root: "/srv/apps/nomi",
+    composeProject: "nomi",
+    composeWorkingDir: "/srv/apps/nomi",
+    composeFiles: ["/srv/apps/nomi/compose.yaml"]
+  },
   "qlix-production": {
     projectId: "qlix",
     root: "/srv/apps/qlix",
@@ -178,6 +185,14 @@ export function validateComposeTarget(target: ComposeTarget, request: ComposeDep
     }
     if (runtime.healthContract !== "loomrun-web-root-api-ready-v1") {
       throw new Error("Loomrun target lacks its approved health contract");
+    }
+  }
+  if (target.id === "nomi-production") {
+    if (runtime.candidateContextPolicy !== "nomi-next-source-v1") {
+      throw new Error("Nomi target lacks its approved candidate context policy");
+    }
+    if (runtime.healthContract !== "nomi-node-root-http-v1") {
+      throw new Error("Nomi target lacks its approved health contract");
     }
   }
   if (target.id === "exora-shared-services-production" && runtime.sharedDeploymentPolicy !== "explicit-shared-services-policy") {

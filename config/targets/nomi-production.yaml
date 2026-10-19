@@ -16,8 +16,11 @@ runtime:
   builtServices: nomi
   healthServices: nomi
   containers: nomi
-  publicBindings: 127.0.0.1:3002->3002
-  preservePolicy: pending-nomi-runtime-inventory
-  deploymentStatus: dry-run-only-pending-runtime-inventory
-  composeHealthPolicy: blocked-pending-verified-health-contract
+  publicBindings: 127.0.0.1:3002->3000
+  persistentMounts: /srv/apps/nomi/data/uploads:/app/data/uploads
+  preservePolicy: preserve-nomi-uploads-external-postgres
+  candidateContextPolicy: nomi-next-source-v1
+  healthContract: nomi-node-root-http-v1
+  deploymentStatus: compose-helper-installed-and-staging-validated
+  composeHealthPolicy: docker-healthcheck-required
 enabled: true
