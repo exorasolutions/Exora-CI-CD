@@ -15,4 +15,4 @@ runtime:
   imageRepository: exora-web
   hostBinding: "127.0.0.1:8110:80"
   artifactPath: .central-cicd/release/static-site/dist
-enabled: false
+enabled: true
