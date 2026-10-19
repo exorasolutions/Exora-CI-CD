@@ -4,5 +4,5 @@ runtime: node
 lockfileRequired: false
 install: "true"
 test: "true"
-build: "rm -rf .central-cicd/release && mkdir -p .central-cicd/release && tar --exclude=.git --exclude=.central-cicd --exclude=node_modules --exclude='*/node_modules' --exclude=.env --exclude='.env.*' --exclude='*/.env' --exclude='*/.env.*' -cf - Dockerfile docker-compose.yml backend-adk frontend packages qlix-mcp-service qlix-whatsapp-service | tar -C .central-cicd/release -xf -"
+build: "rm -rf .central-cicd/release && mkdir -p .central-cicd/release && tar --exclude=.git --exclude=.central-cicd --exclude=node_modules --exclude='*/node_modules' --exclude=.env --exclude='.env.*' --exclude='*/.env' --exclude='*/.env.*' -cf - deploy/server backend-adk frontend packages/plagiarism-engine adk_new vscode-extension | tar -C .central-cicd/release -xf -"
 artifactPath: .central-cicd/release

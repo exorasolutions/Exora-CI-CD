@@ -21,6 +21,8 @@ runtime:
   persistentMounts: /srv/apps/shared/data/whatsapp-qlix:/data,/srv/apps/shared/data/whatsapp-loomrun/auth_info:/app/auth_info,/srv/apps/shared/data/mcp-qlix:/data
   sharedDeploymentPolicy: explicit-shared-services-policy
   preservePolicy: preserve-whatsapp-auth-mcp-data-shared-network
-  deploymentStatus: disabled-compose-helper-not-production-installed
-  composeHealthPolicy: blocked-pending-verified-health-contract
-enabled: false
+  deploymentStatus: compose-helper-installed-and-staging-validated
+  composeHealthPolicy: docker-healthcheck-required
+  candidateContextPolicy: exora-shared-services-source-v1
+  healthContract: shared-services-docker-health-v1
+enabled: true

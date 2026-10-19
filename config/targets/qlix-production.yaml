@@ -6,7 +6,9 @@ rootPath: /srv/apps/qlix
 releaseRoot: /srv/apps/qlix/.central-cicd/releases
 currentPath: /srv/apps/qlix/deploy/server
 health:
-  type: none
+  type: http
+  url: http://127.0.0.1:4000/api/v1/health
+  expectedStatus: 200
   timeoutMs: 10000
 runtime:
   composeProject: qlix
@@ -20,6 +22,8 @@ runtime:
   publicBindings: 127.0.0.1:4000,127.0.0.1:3000
   persistentMounts: /srv/apps/qlix/backend-adk/.env:/app/backend-adk/.env:ro,/srv/apps/qlix/deploy/server/data:/app-data,/tmp:/tmp
   preservePolicy: preserve-host-network-runner-provenance-secrets-ssh
-  deploymentStatus: disabled-compose-helper-not-production-installed
-  composeHealthPolicy: blocked-pending-verified-health-contract
-enabled: false
+  deploymentStatus: compose-helper-installed-and-staging-validated
+  composeHealthPolicy: docker-healthcheck-required
+  candidateContextPolicy: qlix-server-source-v1
+  healthContract: qlix-api-v1-health-frontend-root-v1
+enabled: true

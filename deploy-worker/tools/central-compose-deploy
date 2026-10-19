@@ -26,7 +26,7 @@ MAX_BYTES = 1024 * 1024 * 1024
 # Maximum scope for live Compose mutation in this deployment phase.
 # Actual permission requires a separate root-owned opt-in file, and each target
 # must still pass the independently pinned contract below before Docker runs.
-LIVE_MUTATION_TARGETS = {"cab-production", "loomrun-production", "nomi-production", "sunkidz-production", "exora-crm-production"}
+LIVE_MUTATION_TARGETS = {"cab-production", "loomrun-production", "nomi-production", "sunkidz-production", "exora-crm-production", "qlix-production", "exora-shared-services-production"}
 LIVE_TARGETS_CONFIG = Path("/etc/central-cicd/compose-live-targets")
 STAGING_ROOT_ENV = "CENTRAL_CICD_STAGING_ROOT"
 STAGING_TARGET_PREFIX = "loomrun-staging-"
@@ -90,6 +90,8 @@ APPROVED_TARGETS = {
         "persistentMounts": "/srv/apps/shared/data/whatsapp-qlix:/data,/srv/apps/shared/data/whatsapp-loomrun/auth_info:/app/auth_info,/srv/apps/shared/data/mcp-qlix:/data",
         "preservePolicy": "preserve-whatsapp-auth-mcp-data-shared-network",
         "sharedDeploymentPolicy": "explicit-shared-services-policy",
+        "candidateContextPolicy": "exora-shared-services-source-v1",
+        "healthContract": "shared-services-docker-health-v1",
     },
     "loomrun-production": {
         "projectId": "loomrun",
@@ -139,6 +141,8 @@ APPROVED_TARGETS = {
         "publicBindings": "127.0.0.1:4000,127.0.0.1:3000",
         "persistentMounts": "/srv/apps/qlix/backend-adk/.env:/app/backend-adk/.env:ro,/srv/apps/qlix/deploy/server/data:/app-data,/tmp:/tmp",
         "preservePolicy": "preserve-host-network-runner-provenance-secrets-ssh",
+        "candidateContextPolicy": "qlix-server-source-v1",
+        "healthContract": "qlix-api-v1-health-frontend-root-v1",
     },
     "sunkidz-production": {
         "projectId": "sunkidz",
@@ -953,6 +957,40 @@ def prepare_exora_crm_build_contexts(policy, release):
         _required_release_path(release, relative, directory=True)
     return {"crm": {"context": str(release), "dockerfile": "Dockerfile"}}
 
+def prepare_qlix_build_contexts(policy, release):
+    if policy.get("targetId") != "qlix-production" or policy.get("candidateContextPolicy") != "qlix-server-source-v1":
+        fail("candidate artifact mapping is not approved for this compose target")
+    release = _unwrap_release(release)
+    for relative in [
+        "deploy/server/backend.Dockerfile", "deploy/server/frontend.Dockerfile",
+        "backend-adk/package.json", "backend-adk/package-lock.json",
+        "frontend/package.json", "frontend/package-lock.json",
+        "packages/plagiarism-engine/package.json", "packages/plagiarism-engine/package-lock.json",
+    ]:
+        _required_release_path(release, relative)
+    for relative in ["backend-adk", "frontend", "packages/plagiarism-engine", "adk_new", "vscode-extension"]:
+        _required_release_path(release, relative, directory=True)
+    return {
+        "backend": {"context": str(release), "dockerfile": "deploy/server/backend.Dockerfile"},
+        "frontend": {"context": str(release), "dockerfile": "deploy/server/frontend.Dockerfile"},
+    }
+
+
+def prepare_shared_services_build_contexts(policy, release):
+    if policy.get("targetId") != "exora-shared-services-production" or policy.get("candidateContextPolicy") != "exora-shared-services-source-v1":
+        fail("candidate artifact mapping is not approved for this compose target")
+    release = _unwrap_release(release)
+    for relative in ["compose.yaml", "compose.prod.yaml", "whatsapp-qlix/Dockerfile", "whatsapp-loomrun/Dockerfile", "mcp-qlix/Dockerfile"]:
+        _required_release_path(release, relative)
+    for relative in ["whatsapp-qlix", "whatsapp-loomrun", "mcp-qlix"]:
+        _required_release_path(release, relative, directory=True)
+    return {
+        "whatsapp-qlix": {"context": str((release / "whatsapp-qlix").resolve(strict=True)), "dockerfile": "Dockerfile"},
+        "whatsapp-loomrun": {"context": str((release / "whatsapp-loomrun").resolve(strict=True)), "dockerfile": "Dockerfile"},
+        "mcp-qlix": {"context": str((release / "mcp-qlix").resolve(strict=True)), "dockerfile": "Dockerfile"},
+    }
+
+
 def prepare_build_contexts(policy, release):
     """Dispatch candidate preparation by explicit project-specific policy."""
     target_id = policy.get("targetId")
@@ -966,6 +1004,10 @@ def prepare_build_contexts(policy, release):
         return prepare_sunkidz_build_contexts(policy, release)
     if target_id == "exora-crm-production":
         return prepare_exora_crm_build_contexts(policy, release)
+    if target_id == "qlix-production":
+        return prepare_qlix_build_contexts(policy, release)
+    if target_id == "exora-shared-services-production":
+        return prepare_shared_services_build_contexts(policy, release)
     fail("candidate artifact mapping is not approved for this compose target")
 
 
