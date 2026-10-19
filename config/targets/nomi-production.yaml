@@ -1,0 +1,23 @@
+id: nomi-production
+projectId: nomi
+environment: production
+adapter: compose
+rootPath: /srv/apps/nomi
+releaseRoot: /srv/apps/nomi/.central-cicd/releases
+currentPath: /srv/apps/nomi
+health:
+  type: none
+  timeoutMs: 10000
+runtime:
+  composeProject: nomi
+  composeWorkingDir: /srv/apps/nomi
+  composeFiles: /srv/apps/nomi/compose.yaml
+  composeServices: nomi
+  builtServices: nomi
+  healthServices: nomi
+  containers: nomi-nomi
+  publicBindings: 127.0.0.1:3002->3002
+  preservePolicy: pending-nomi-runtime-inventory
+  deploymentStatus: dry-run-only-pending-runtime-inventory
+  composeHealthPolicy: blocked-pending-verified-health-contract
+enabled: true

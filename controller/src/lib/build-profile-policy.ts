@@ -11,6 +11,7 @@ export const approvedProfileIds = [
   'node-npm-exora-shared-services-v1',
   'node-npm-loomrun-compose-source-v1',
   'node-npm-loomrun-web-v1',
+  'node-npm-nomi-source-v1',
   'node-npm-qlix-compose-source-v1',
   'node-npm-sunkidz-compose-source-v1',
   'node-npm-sunkidz-web-v1'
@@ -54,6 +55,7 @@ const runtimeByProfile: Record<ApprovedProfileId, BuildProfile['runtime']> = {
   'node-npm-exora-shared-services-v1': 'node',
   'node-npm-loomrun-compose-source-v1': 'node',
   'node-npm-loomrun-web-v1': 'node',
+  'node-npm-nomi-source-v1': 'node',
   'node-npm-qlix-compose-source-v1': 'node',
   'node-npm-sunkidz-compose-source-v1': 'node',
   'node-npm-sunkidz-web-v1': 'node'

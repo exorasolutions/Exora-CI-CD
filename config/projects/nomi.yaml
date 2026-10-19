@@ -1,0 +1,21 @@
+schemaVersion: 1
+project:
+  id: nomi
+  jenkinsJob: nomi-build
+  enabled: true
+  github:
+    owner: rvamsi201-vk
+    repo: Nomi
+    branch: main
+  build:
+    profile: node-npm-nomi-source-v1
+    agentLabel: linux-build
+    testsRequired: false
+    timeoutMinutes: 45
+  deployment:
+    mode: manual
+    adapter: compose
+    targetId: nomi-production
+    environment: production
+  healthCheck:
+    type: none

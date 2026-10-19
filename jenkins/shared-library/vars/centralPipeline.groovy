@@ -370,6 +370,7 @@ private Map loadBuildProfile(Map cfg) {
     'node-npm-exora-shared-services-v1',
     'node-npm-loomrun-compose-source-v1',
     'node-npm-loomrun-web-v1',
+    'node-npm-nomi-source-v1',
     'node-npm-qlix-compose-source-v1',
     'node-npm-sunkidz-compose-source-v1',
     'node-npm-sunkidz-web-v1'
@@ -457,6 +458,7 @@ private void validateRuntimeProfileCombination(String profileId, String runtime)
     'node-npm-exora-shared-services-v1': 'node',
     'node-npm-loomrun-compose-source-v1': 'node',
     'node-npm-loomrun-web-v1': 'node',
+    'node-npm-nomi-source-v1': 'node',
     'node-npm-qlix-compose-source-v1': 'node',
     'node-npm-sunkidz-compose-source-v1': 'node',
     'node-npm-sunkidz-web-v1': 'node'

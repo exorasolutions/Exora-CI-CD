@@ -61,6 +61,7 @@ test('loads every project config and maps each repository only once', () => {
     'exora-crm',
     'exora-shared-services',
     'loomrun',
+    'nomi',
     'qlix',
     'sunkidz'
   ]);

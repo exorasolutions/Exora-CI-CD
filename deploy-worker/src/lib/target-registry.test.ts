@@ -19,6 +19,7 @@ test("loads every target config with explicit enablement", () => {
     "exora-shared-services-production",
     "exora-production",
     "loomrun-production",
+    "nomi-production",
     "qlix-production",
     "sunkidz-production"
   ]) {
@@ -29,12 +30,9 @@ test("loads every target config with explicit enablement", () => {
     assert.equal(target.environment, "production");
     assert.equal(target.rootPath.startsWith("/"), true);
     assert.equal(target.releaseRoot.startsWith(target.rootPath), true);
-    if (target.id === "loomrun-production") {
-      assert.equal(target.enabled, true);
-    } else if (!["exora-production", "example-static-production"].includes(target.id)) {
-      assert.equal(target.enabled, false, `${target.id} must remain disabled until adapter execution is reviewed`);
-      assert.match(target.rootPath, /^\/srv\/apps\//);
-    }
+    const handoffEnabled = ["cab-production", "exora-static", "loomrun-production", "nomi-production"];
+    assert.equal(target.enabled, handoffEnabled.includes(target.id), `${target.id} has unexpected handoff enablement`);
+    if (!["exora-production", "example-static-production"].includes(target.id)) assert.match(target.rootPath, /^\/srv\/apps\//);
   }
 });
 
@@ -90,11 +88,12 @@ test("production targets match verified VPS runtime paths and explicit enablemen
     assert.ok(target, `missing target ${id}`);
     assert.equal(target.rootPath, want.rootPath);
     assert.equal(target.adapter, want.adapter);
-    assert.equal(target.enabled, target.id === "loomrun-production");
+    assert.equal(target.enabled, ["cab-production", "loomrun-production", "nomi-production"].includes(target.id));
     assert.equal(target.runtime.composeProject, want.composeProject);
     assert.equal(target.runtime.composeWorkingDir, want.composeWorkingDir);
     assert.equal(target.runtime.composeFiles, want.composeFiles);
-    assert.equal(target.runtime.deploymentStatus, ['cab-production', 'loomrun-production'].includes(target.id) ? 'compose-helper-installed-and-staging-validated' : 'disabled-compose-helper-not-production-installed');
+    const liveComposeTargets = ['cab-production', 'loomrun-production'];
+    assert.equal(target.runtime.deploymentStatus, liveComposeTargets.includes(target.id) ? 'compose-helper-installed-and-staging-validated' : target.id === 'nomi-production' ? 'dry-run-only-pending-runtime-inventory' : 'disabled-compose-helper-not-production-installed');
     assert.equal(target.runtime.composeHealthPolicy, ['cab-production', 'loomrun-production'].includes(target.id) ? 'docker-healthcheck-required' : 'blocked-pending-verified-health-contract');
   }
 
