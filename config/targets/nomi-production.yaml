@@ -15,7 +15,7 @@ runtime:
   composeServices: nomi
   builtServices: nomi
   healthServices: nomi
-  containers: nomi-nomi
+  containers: nomi
   publicBindings: 127.0.0.1:3002->3002
   preservePolicy: pending-nomi-runtime-inventory
   deploymentStatus: dry-run-only-pending-runtime-inventory

@@ -6,7 +6,7 @@ INSERT INTO deployment_targets (
 )
 VALUES (
   'nomi-production', 'nomi', 'production', 'compose', '/srv/apps/nomi',
-  NULL, NULL, FALSE
+  NULL, 200, FALSE
 )
 ON CONFLICT (id) DO UPDATE SET
   project_id = EXCLUDED.project_id,
