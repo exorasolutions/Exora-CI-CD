@@ -870,9 +870,12 @@ def prepare_nomi_build_contexts(policy, release):
         fail("candidate release directory is missing or unsafe")
     release = release.resolve(strict=True)
     wrapper = release / ".central-cicd"
-    nested = wrapper / "release"
+    release_wrapper = wrapper / "release"
+    nested = release_wrapper / "nomi-source"
     if wrapper.exists():
-        if wrapper.is_symlink() or not wrapper.is_dir() or nested.is_symlink() or not nested.is_dir():
+        if (wrapper.is_symlink() or not wrapper.is_dir() or
+                release_wrapper.is_symlink() or not release_wrapper.is_dir() or
+                nested.is_symlink() or not nested.is_dir()):
             fail("candidate artifact wrapper is unsafe")
         resolved_nested = nested.resolve(strict=True)
         if release not in resolved_nested.parents:
