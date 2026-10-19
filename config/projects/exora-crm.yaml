@@ -5,7 +5,7 @@ project:
   github:
     owner: rvamsi201-vk
     repo: exora_crm
-    branch: prasad_changes
+    branch: master
   build:
     profile: node-npm-exora-crm-v1
     agentLabel: linux-build

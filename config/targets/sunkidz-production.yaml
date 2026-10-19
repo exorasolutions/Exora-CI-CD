@@ -19,6 +19,8 @@ runtime:
   publicBindings: 127.0.0.1:8101->80,127.0.0.1:8104->8001
   persistentMounts: /srv/apps/sunkidz/data/uploads:/app/uploads
   preservePolicy: preserve-uploads-web-api-routes
-  deploymentStatus: disabled-compose-helper-not-production-installed
-  composeHealthPolicy: blocked-pending-verified-health-contract
+  candidateContextPolicy: sunkidz-compose-source-v1
+  healthContract: sunkidz-web-api-health-v1
+  deploymentStatus: compose-helper-installed-and-staging-validated
+  composeHealthPolicy: docker-healthcheck-required
 enabled: false

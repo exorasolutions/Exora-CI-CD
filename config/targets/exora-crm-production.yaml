@@ -19,6 +19,8 @@ runtime:
   publicBindings: 127.0.0.1:8106->3002
   persistentMounts: /srv/apps/exora_crm/data/logs:/app/logs,/var/www/Nomi/data:/nomi:ro
   preservePolicy: preserve-crm-data-and-nomi-readonly
-  deploymentStatus: disabled-compose-helper-not-production-installed
-  composeHealthPolicy: blocked-pending-verified-health-contract
+  candidateContextPolicy: exora-crm-node-source-v1
+  healthContract: exora-crm-health-v1
+  deploymentStatus: compose-helper-installed-and-staging-validated
+  composeHealthPolicy: docker-healthcheck-required
 enabled: false

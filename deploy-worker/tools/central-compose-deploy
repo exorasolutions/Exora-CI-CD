@@ -26,7 +26,7 @@ MAX_BYTES = 1024 * 1024 * 1024
 # Maximum scope for live Compose mutation in this deployment phase.
 # Actual permission requires a separate root-owned opt-in file, and each target
 # must still pass the independently pinned contract below before Docker runs.
-LIVE_MUTATION_TARGETS = {"cab-production", "loomrun-production", "nomi-production"}
+LIVE_MUTATION_TARGETS = {"cab-production", "loomrun-production", "nomi-production", "sunkidz-production", "exora-crm-production"}
 LIVE_TARGETS_CONFIG = Path("/etc/central-cicd/compose-live-targets")
 STAGING_ROOT_ENV = "CENTRAL_CICD_STAGING_ROOT"
 STAGING_TARGET_PREFIX = "loomrun-staging-"
@@ -72,6 +72,8 @@ APPROVED_TARGETS = {
         "publicBindings": "127.0.0.1:8106->3002",
         "persistentMounts": "/srv/apps/exora_crm/data/logs:/app/logs,/var/www/Nomi/data:/nomi:ro",
         "preservePolicy": "preserve-crm-data-and-nomi-readonly",
+        "candidateContextPolicy": "exora-crm-node-source-v1",
+        "healthContract": "exora-crm-health-v1",
     },
     "exora-shared-services-production": {
         "projectId": "exora-shared-services",
@@ -151,6 +153,8 @@ APPROVED_TARGETS = {
         "publicBindings": "127.0.0.1:8101->80,127.0.0.1:8104->8001",
         "persistentMounts": "/srv/apps/sunkidz/data/uploads:/app/uploads",
         "preservePolicy": "preserve-uploads-web-api-routes",
+        "candidateContextPolicy": "sunkidz-compose-source-v1",
+        "healthContract": "sunkidz-web-api-health-v1",
     },
 }
 
@@ -913,6 +917,42 @@ def prepare_nomi_build_contexts(policy, release):
     return {"nomi": {"context": str(release), "dockerfile": dockerfile.name}}
 
 
+def _unwrap_release(release, component=None):
+    release = Path(release)
+    if release.is_symlink() or not release.is_dir():
+        fail("candidate release directory is missing or unsafe")
+    release = release.resolve(strict=True)
+    wrapper = release / ".central-cicd" / "release"
+    nested = wrapper / component if component else wrapper
+    if (release / ".central-cicd").exists():
+        if wrapper.is_symlink() or not wrapper.is_dir() or nested.is_symlink() or not nested.is_dir():
+            fail("candidate artifact wrapper is unsafe")
+        nested = nested.resolve(strict=True)
+        if release not in nested.parents:
+            fail("candidate nested release escapes extraction root")
+        return nested
+    return release
+
+def prepare_sunkidz_build_contexts(policy, release):
+    if policy.get("targetId") != "sunkidz-production" or policy.get("candidateContextPolicy") != "sunkidz-compose-source-v1":
+        fail("candidate artifact mapping is not approved for this compose target")
+    release = _unwrap_release(release)
+    for relative in ["sunkidz-web/Dockerfile", "sunkidz-web/package.json", "sunkidz-web/package-lock.json", "backend_sunkidz/Dockerfile", "backend_sunkidz/requirements.lock.txt"]:
+        _required_release_path(release, relative)
+    for relative in ["sunkidz-web", "backend_sunkidz"]:
+        _required_release_path(release, relative, directory=True)
+    return {"web": {"context": str((release / "sunkidz-web").resolve(strict=True)), "dockerfile": "Dockerfile"}, "api": {"context": str((release / "backend_sunkidz").resolve(strict=True)), "dockerfile": "Dockerfile"}}
+
+def prepare_exora_crm_build_contexts(policy, release):
+    if policy.get("targetId") != "exora-crm-production" or policy.get("candidateContextPolicy") != "exora-crm-node-source-v1":
+        fail("candidate artifact mapping is not approved for this compose target")
+    release = _unwrap_release(release, "exora-crm-api")
+    for relative in ["Dockerfile", "package.json", "package-lock.json", "server.js", "index.html"]:
+        _required_release_path(release, relative)
+    for relative in ["lib", "migrations", "scripts"]:
+        _required_release_path(release, relative, directory=True)
+    return {"crm": {"context": str(release), "dockerfile": "Dockerfile"}}
+
 def prepare_build_contexts(policy, release):
     """Dispatch candidate preparation by explicit project-specific policy."""
     target_id = policy.get("targetId")
@@ -922,6 +962,10 @@ def prepare_build_contexts(policy, release):
         return prepare_loomrun_build_contexts(policy, release)
     if target_id == "nomi-production":
         return prepare_nomi_build_contexts(policy, release)
+    if target_id == "sunkidz-production":
+        return prepare_sunkidz_build_contexts(policy, release)
+    if target_id == "exora-crm-production":
+        return prepare_exora_crm_build_contexts(policy, release)
     fail("candidate artifact mapping is not approved for this compose target")
 
 
