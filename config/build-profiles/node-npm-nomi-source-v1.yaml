@@ -15,9 +15,8 @@ packages:
       - app
       - components
       - lib
-      - mcp
       - prisma
-      - public
+      - middleware.ts
       - package.json
       - package-lock.json
       - next.config.ts
