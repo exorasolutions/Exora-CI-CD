@@ -22,4 +22,4 @@ runtime:
   preservePolicy: preserve-nammacabs-data-and-redis
   deploymentStatus: compose-helper-installed-and-staging-validated
   composeHealthPolicy: docker-healthcheck-required
-enabled: false
+enabled: true
