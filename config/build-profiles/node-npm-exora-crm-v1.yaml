@@ -21,7 +21,8 @@ packages:
       - lead-scraper.js
       - lead-scorer.js
       - ecosystem.config.js
-      - docker-compose.yml
+      - compose.yaml
+      - compose.prod.yaml
       - index.html
       - logo.png
       - lib

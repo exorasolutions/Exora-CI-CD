@@ -23,4 +23,4 @@ runtime:
   healthContract: exora-crm-health-v1
   deploymentStatus: compose-helper-installed-and-staging-validated
   composeHealthPolicy: docker-healthcheck-required
-enabled: false
+enabled: true

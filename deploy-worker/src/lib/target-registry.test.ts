@@ -30,7 +30,7 @@ test("loads every target config with explicit enablement", () => {
     assert.equal(target.environment, "production");
     assert.equal(target.rootPath.startsWith("/"), true);
     assert.equal(target.releaseRoot.startsWith(target.rootPath), true);
-    const handoffEnabled = ["cab-production", "exora-static", "loomrun-production", "nomi-production"];
+    const handoffEnabled = ["cab-production", "exora-static", "loomrun-production", "nomi-production", "sunkidz-production", "exora-crm-production"];
     assert.equal(target.enabled, handoffEnabled.includes(target.id), `${target.id} has unexpected handoff enablement`);
     if (!["exora-production", "example-static-production"].includes(target.id)) assert.match(target.rootPath, /^\/srv\/apps\//);
   }
@@ -88,7 +88,7 @@ test("production targets match verified VPS runtime paths and explicit enablemen
     assert.ok(target, `missing target ${id}`);
     assert.equal(target.rootPath, want.rootPath);
     assert.equal(target.adapter, want.adapter);
-    assert.equal(target.enabled, ["cab-production", "loomrun-production", "nomi-production"].includes(target.id));
+    assert.equal(target.enabled, ["cab-production", "loomrun-production", "nomi-production", "sunkidz-production", "exora-crm-production"].includes(target.id));
     assert.equal(target.runtime.composeProject, want.composeProject);
     assert.equal(target.runtime.composeWorkingDir, want.composeWorkingDir);
     assert.equal(target.runtime.composeFiles, want.composeFiles);
