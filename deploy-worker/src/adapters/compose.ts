@@ -72,6 +72,7 @@ type ComposePolicy = {
   composeHealthPolicy: string;
   candidateContextPolicy?: string;
   healthContract?: string;
+  migrationPolicy?: string;
 };
 
 const APPROVED_COMPOSE_TARGETS: Record<string, {
@@ -186,6 +187,9 @@ export function validateComposeTarget(target: ComposeTarget, request: ComposeDep
     if (runtime.healthContract !== "loomrun-web-root-api-ready-v1") {
       throw new Error("Loomrun target lacks its approved health contract");
     }
+    if (runtime.migrationPolicy !== "loomrun-prisma-5-forward-only-v1") {
+      throw new Error("Loomrun target lacks its approved Prisma migration policy");
+    }
   }
   if (target.id === "nomi-production") {
     if (runtime.candidateContextPolicy !== "nomi-next-source-v1") {
@@ -231,7 +235,8 @@ export function validateComposeTarget(target: ComposeTarget, request: ComposeDep
     deploymentStatus,
     composeHealthPolicy,
     candidateContextPolicy: runtime.candidateContextPolicy,
-    healthContract: runtime.healthContract
+    healthContract: runtime.healthContract,
+    migrationPolicy: runtime.migrationPolicy
   };
 }
 

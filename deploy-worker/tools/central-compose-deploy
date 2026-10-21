@@ -110,6 +110,7 @@ APPROVED_TARGETS = {
         "preservePolicy": "preserve-storage-env-redis-shared-network",
         "candidateContextPolicy": "loomrun-source-root-v1",
         "healthContract": "loomrun-web-root-api-ready-v1",
+        "migrationPolicy": "loomrun-prisma-5-forward-only-v1",
     },
     "nomi-production": {
         "projectId": "nomi",
@@ -347,7 +348,7 @@ def validate_approved_contract(policy):
     for key in ["networks", "internalPorts", "networkMode", "sharedDeploymentPolicy"]:
         if policy.get(key, "") != expected.get(key, ""):
             fail(f"compose policy violates approved contract: {key}")
-    for key in ["candidateContextPolicy", "healthContract"]:
+    for key in ["candidateContextPolicy", "healthContract", "migrationPolicy"]:
         if key in expected and policy.get(key) != expected[key]:
             fail(f"compose policy violates approved contract: {key}")
     if policy.get("deploymentStatus") != "compose-helper-installed-and-staging-validated":
@@ -1021,6 +1022,31 @@ def compose_deployment_order(policy):
         return [service for service in preferred if service in policy["builtServices"]]
     return list(policy["builtServices"])
 
+
+def run_loomrun_prisma_migrations(policy, new_images):
+    """Apply only the candidate's forward Prisma migrations before activation."""
+    if policy.get("targetId") != "loomrun-production":
+        return
+    if policy.get("migrationPolicy") != "loomrun-prisma-5-forward-only-v1":
+        fail("Loomrun candidate lacks the approved forward-only Prisma migration policy")
+
+    image = new_images.get("api")
+    if not isinstance(image, str) or not re.fullmatch(r"loomrun-api:cicd-[a-f0-9]{12}-[1-9][0-9]*", image):
+        fail("Loomrun candidate API image is invalid for Prisma migration")
+
+    env_file = Path("/srv/apps/loomrun/.env")
+    if env_file.is_symlink() or not env_file.is_file():
+        fail("Loomrun runtime environment file is missing or unsafe")
+
+    run([
+        "docker", "run", "--rm",
+        "--network", "loomrun_default",
+        "--env-file", str(env_file),
+        "--mount", f"type=bind,src={env_file},dst=/app/.env,readonly",
+        image,
+        "prisma", "migrate", "deploy", "--schema", "prisma/schema.prisma",
+    ], timeout=1800)
+
 def release_images(policy):
     return {
         service: f"{policy['composeProject']}-{service}:cicd-{policy['commitSha'][:12]}-{policy['deploymentId']}"
@@ -1094,6 +1120,14 @@ def deploy(policy_path):
             # Build both candidates before replacing either running service.
             for service in compose_deployment_order(policy):
                 run([*compose_args(policy, [override]), "build", service], cwd=policy["composeWorkingDir"], timeout=1800)
+
+            if policy.get("targetId") == "loomrun-production":
+                # A migration failure occurs before activation, so live images remain untouched.
+                state["migration"] = {"policy": policy.get("migrationPolicy", "none"), "status": "starting"}
+                write_state(policy, state)
+                run_loomrun_prisma_migrations(policy, new_images)
+                state["migration"]["status"] = "succeeded"
+                write_state(policy, state)
 
             # Once activation begins, errors must use the locked rollback path.
             state["activationStarted"] = True

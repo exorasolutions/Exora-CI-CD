@@ -25,6 +25,7 @@ runtime:
   preservePolicy: preserve-storage-env-redis-shared-network
   candidateContextPolicy: loomrun-source-root-v1
   healthContract: loomrun-web-root-api-ready-v1
+  migrationPolicy: loomrun-prisma-5-forward-only-v1
   deploymentStatus: compose-helper-installed-and-staging-validated
   composeHealthPolicy: docker-healthcheck-required
 enabled: true

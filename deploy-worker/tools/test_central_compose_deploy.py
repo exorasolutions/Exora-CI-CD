@@ -229,6 +229,29 @@ class LoomrunContextTests(unittest.TestCase):
             ["api", "web"],
         )
 
+    def test_loomrun_prisma_migration_uses_candidate_before_activation(self):
+        module = helper_module()
+        calls = []
+
+        def fake_run(args, **kwargs):
+            calls.append((args, kwargs))
+            return ""
+
+        module["run_loomrun_prisma_migrations"].__globals__["run"] = fake_run
+        module["run_loomrun_prisma_migrations"].__globals__["Path"] = lambda _value: type("EnvFile", (), {
+            "__str__": lambda self: "/srv/apps/loomrun/.env",
+            "is_symlink": lambda self: False,
+            "is_file": lambda self: True,
+        })()
+        module["run_loomrun_prisma_migrations"](
+            {"targetId": "loomrun-production", "migrationPolicy": "loomrun-prisma-5-forward-only-v1"},
+            {"api": "loomrun-api:cicd-" + "a" * 12 + "-42"},
+        )
+        args, kwargs = calls[0]
+        self.assertIn("loomrun-api:cicd-" + "a" * 12 + "-42", args)
+        self.assertEqual(args[-4:], ["migrate", "deploy", "--schema", "prisma/schema.prisma"])
+        self.assertEqual(kwargs["timeout"], 1800)
+
     def test_staging_policy_requires_explicit_isolated_identity(self):
         module = helper_module()
         with tempfile.TemporaryDirectory() as directory:
@@ -303,6 +326,7 @@ class LoomrunContextTests(unittest.TestCase):
             "preservePolicy": "preserve-storage-env-redis-shared-network",
             "candidateContextPolicy": "loomrun-source-root-v1",
             "healthContract": "loomrun-web-root-api-ready-v1",
+            "migrationPolicy": "loomrun-prisma-5-forward-only-v1",
             "deploymentStatus": "disabled-compose-helper-not-production-installed",
             "composeHealthPolicy": "blocked-pending-verified-health-contract",
         }

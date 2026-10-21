@@ -46,6 +46,7 @@ const target: ComposeTarget = {
     preservePolicy: "preserve-storage-env-redis-shared-network",
     candidateContextPolicy: "loomrun-source-root-v1",
     healthContract: "loomrun-web-root-api-ready-v1",
+    migrationPolicy: "loomrun-prisma-5-forward-only-v1",
     deploymentStatus: "compose-helper-installed-and-staging-validated",
     composeHealthPolicy: "docker-healthcheck-required"
   }
@@ -69,6 +70,10 @@ test("rejects Loomrun health policies that are not the verified web/API contract
     ...target,
     runtime: { ...target.runtime, healthContract: "none" }
   }, request), /approved health contract/);
+  assert.throws(() => validateComposeTarget({
+    ...target,
+    runtime: { ...target.runtime, migrationPolicy: "none" }
+  }, request), /approved Prisma migration policy/);
 });
 
 test("rejects repository, target, root, project, compose file, and wrong-service mismatches", () => {
