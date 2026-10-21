@@ -577,7 +577,8 @@ private void enforceLockfilePolicy(Map profile) {
   if (profile.lockfileRequired != true) return
   def lockfileByProfile = [
     'node-npm-v1': 'package-lock.json',
-    'node-pnpm-v1': 'pnpm-lock.yaml'
+    'node-pnpm-v1': 'pnpm-lock.yaml',
+    'node-pnpm-hms-platform-source-v1': 'pnpm-lock.yaml'
   ]
   def lockfile = lockfileByProfile.get(profile.id as String)
   if (!lockfile) {
@@ -636,7 +637,14 @@ private void runHmsHybridCommand(Map profile, String key) {
   if (profile.id != 'node-pnpm-hms-platform-source-v1') error('Unsupported HMS execution mode')
   def commands = [
     install: 'set -eu; test -f pnpm-lock.yaml; test -f Dockerfile.platform; corepack enable; pnpm install --frozen-lockfile',
-    test: 'set -eu; test ! -e .env; pnpm test',
+    test: '''set -eu
+      test ! -e .env
+      export PG_PORT=54329
+      export PG_DATA_DIR="$PWD/.central-cicd/hms-test-postgres"
+      trap 'pnpm pg:stop || true' EXIT
+      pnpm pg:start
+      pnpm test
+    ''',
     build: '''set -eu
       test ! -e .env
       pnpm platform:build

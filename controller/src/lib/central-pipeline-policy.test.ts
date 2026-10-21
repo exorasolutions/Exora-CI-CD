@@ -109,6 +109,19 @@ test('validates full 40-character commit SHA only', () => {
   assert.throws(() => validateCommitSha('g123456789abcdef0123456789abcdef01234567'), /invalid commit sha/);
 });
 
+test('HMS profile is centrally approved and the shared library routes it through isolated pnpm CI', () => {
+  const profile = parseBuildProfileYaml('node-pnpm-hms-platform-source-v1', readFileSync(join(profileDir, 'node-pnpm-hms-platform-source-v1.yaml'), 'utf8'));
+  assert.equal(profile.execution, 'hms-hybrid');
+  const pipeline = readFileSync(pipelinePath, 'utf8');
+  assert.match(pipeline, /'node-pnpm-hms-platform-source-v1'/);
+  assert.match(pipeline, /'node-pnpm-hms-platform-source-v1': 'node'/);
+  assert.match(pipeline, /'node-pnpm-hms-platform-source-v1': 'pnpm-lock.yaml'/);
+  assert.match(pipeline, /runHmsHybridCommand/);
+  assert.match(pipeline, /PG_DATA_DIR/);
+  assert.match(pipeline, /pnpm pg:start/);
+  assert.match(pipeline, /tenants/);
+});
+
 test('Loomrun source profile packages the verified Compose build context without secrets or data', () => {
   const profile = parseBuildProfileYaml(
     'node-npm-loomrun-compose-source-v1',
