@@ -24,6 +24,7 @@ runtime:
   candidateContextPolicy: hms-platform-pnpm-source-v1
   healthContract: hms-platform-ready-v1
   identityIsolationPolicy: platform-only-keycloak-postgres-immutable-v1
+  migrationPolicy: hms-dbmate-forward-only-control-plane-v1
   deploymentStatus: dry-run-only-compose-helper-validation
   composeHealthPolicy: docker-healthcheck-required
 enabled: false
