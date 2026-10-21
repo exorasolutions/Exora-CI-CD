@@ -72,6 +72,7 @@ type ComposePolicy = {
   composeHealthPolicy: string;
   candidateContextPolicy?: string;
   healthContract?: string;
+  identityIsolationPolicy?: string;
   migrationPolicy?: string;
 };
 
@@ -250,6 +251,7 @@ export function validateComposeTarget(target: ComposeTarget, request: ComposeDep
     composeHealthPolicy,
     candidateContextPolicy: runtime.candidateContextPolicy,
     healthContract: runtime.healthContract,
+    identityIsolationPolicy: runtime.identityIsolationPolicy,
     migrationPolicy: runtime.migrationPolicy
   };
 }

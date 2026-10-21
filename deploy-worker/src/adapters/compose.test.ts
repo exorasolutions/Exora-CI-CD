@@ -52,6 +52,38 @@ const target: ComposeTarget = {
   }
 };
 
+test("serializes HMS identity isolation policy for helper validation", () => {
+  const hmsTarget: ComposeTarget = {
+    ...target,
+    id: "exora-health-platform-production",
+    projectId: "exora-health",
+    targetPath: "/etc/exora-health/compose",
+    healthUrl: "http://127.0.0.1:8111/ready",
+    runtime: {
+      composeProject: "exora-health-platform",
+      composeWorkingDir: "/etc/exora-health/compose",
+      composeFiles: "/etc/exora-health/compose/platform.compose.yml",
+      composeServices: "platform",
+      builtServices: "platform",
+      healthServices: "platform",
+      containers: "exora-health-platform-platform-1",
+      publicBindings: "127.0.0.1:8111->3040",
+      persistentMounts: "",
+      preservePolicy: "preserve-hms-identity-and-platform-runtime-environment",
+      candidateContextPolicy: "hms-platform-pnpm-source-v1",
+      healthContract: "hms-platform-ready-v1",
+      identityIsolationPolicy: "platform-only-keycloak-postgres-immutable-v1",
+      migrationPolicy: "hms-dbmate-forward-only-control-plane-v1",
+      deploymentStatus: "dry-run-only-compose-helper-validation",
+      composeHealthPolicy: "docker-healthcheck-required"
+    }
+  };
+  const hmsRequest = { ...request, projectId: "exora-health", targetId: "exora-health-platform-production" };
+  const policy = validateComposeTarget(hmsTarget, hmsRequest, true);
+  assert.equal(policy.identityIsolationPolicy, "platform-only-keycloak-postgres-immutable-v1");
+  assert.equal(policy.migrationPolicy, "hms-dbmate-forward-only-control-plane-v1");
+});
+
 test("accepts approved compose target contract", () => {
   const policy = validateComposeTarget(target, request);
   assert.equal(policy.targetRoot, "/srv/apps/loomrun");
