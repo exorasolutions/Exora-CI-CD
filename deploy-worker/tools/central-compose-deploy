@@ -33,6 +33,9 @@ STAGING_TARGET_PREFIX = "loomrun-staging-"
 PRODUCTION_ROOTS = {value["targetRoot"] for value in {
     "cab-production": {"targetRoot": "/srv/apps/nammacabs"},
     "exora-crm-production": {"targetRoot": "/srv/apps/exora_crm"},
+    "exora-health-platform-production": {
+        "projectId": "exora-health", "targetRoot": "/etc/exora-health/compose", "composeProject": "exora-health-platform", "composeWorkingDir": "/etc/exora-health/compose", "composeFiles": ["/etc/exora-health/compose/platform.compose.yml"], "composeServices": ["platform"], "builtServices": ["platform"], "healthServices": ["platform"], "containers": ["exora-health-platform-platform-1"], "publicBindings": "127.0.0.1:8111->3040", "persistentMounts": "", "preservePolicy": "preserve-hms-identity-and-platform-runtime-environment", "candidateContextPolicy": "hms-platform-pnpm-source-v1", "healthContract": "hms-platform-ready-v1", "identityIsolationPolicy": "platform-only-keycloak-postgres-immutable-v1",
+    },
     "exora-shared-services-production": {"targetRoot": "/srv/apps/shared"},
     "loomrun-production": {"targetRoot": "/srv/apps/loomrun"},
     "nomi-production": {"targetRoot": "/srv/apps/nomi"},
@@ -74,6 +77,9 @@ APPROVED_TARGETS = {
         "preservePolicy": "preserve-crm-data-and-nomi-readonly",
         "candidateContextPolicy": "exora-crm-node-source-v1",
         "healthContract": "exora-crm-health-v1",
+    },
+    "exora-health-platform-production": {
+        "projectId": "exora-health", "targetRoot": "/etc/exora-health/compose", "composeProject": "exora-health-platform", "composeWorkingDir": "/etc/exora-health/compose", "composeFiles": ["/etc/exora-health/compose/platform.compose.yml"], "composeServices": ["platform"], "builtServices": ["platform"], "healthServices": ["platform"], "containers": ["exora-health-platform-platform-1"], "publicBindings": "127.0.0.1:8111->3040", "persistentMounts": "", "preservePolicy": "preserve-hms-identity-and-platform-runtime-environment", "candidateContextPolicy": "hms-platform-pnpm-source-v1", "healthContract": "hms-platform-ready-v1", "identityIsolationPolicy": "platform-only-keycloak-postgres-immutable-v1",
     },
     "exora-shared-services-production": {
         "projectId": "exora-shared-services",
@@ -348,11 +354,12 @@ def validate_approved_contract(policy):
     for key in ["networks", "internalPorts", "networkMode", "sharedDeploymentPolicy"]:
         if policy.get(key, "") != expected.get(key, ""):
             fail(f"compose policy violates approved contract: {key}")
-    for key in ["candidateContextPolicy", "healthContract", "migrationPolicy"]:
+    for key in ["candidateContextPolicy", "healthContract", "migrationPolicy", "identityIsolationPolicy"]:
         if key in expected and policy.get(key) != expected[key]:
             fail(f"compose policy violates approved contract: {key}")
     if policy.get("deploymentStatus") != "compose-helper-installed-and-staging-validated":
-        fail("compose target is not approved for live helper execution")
+        if not (policy.get("dryRun") is True and policy.get("targetId") == "exora-health-platform-production" and policy.get("deploymentStatus") == "dry-run-only-compose-helper-validation"):
+            fail("compose target is not approved for live helper execution")
     if policy.get("composeHealthPolicy") != "docker-healthcheck-required":
         fail("compose target lacks approved docker health-check policy")
 

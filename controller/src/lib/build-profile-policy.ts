@@ -14,7 +14,8 @@ export const approvedProfileIds = [
   'node-npm-nomi-source-v1',
   'node-npm-qlix-compose-source-v1',
   'node-npm-sunkidz-compose-source-v1',
-  'node-npm-sunkidz-web-v1'
+  'node-npm-sunkidz-web-v1',
+  'node-pnpm-hms-platform-source-v1'
 ] as const;
 export type ApprovedProfileId = typeof approvedProfileIds[number];
 
@@ -28,7 +29,7 @@ export type BuildProfile = {
   test?: string;
   build?: string;
   artifactPath: string;
-  execution?: 'loomrun-hybrid';
+  execution?: 'loomrun-hybrid' | 'hms-hybrid';
   packages?: MonorepoPackage[];
 };
 
@@ -58,7 +59,8 @@ const runtimeByProfile: Record<ApprovedProfileId, BuildProfile['runtime']> = {
   'node-npm-nomi-source-v1': 'node',
   'node-npm-qlix-compose-source-v1': 'node',
   'node-npm-sunkidz-compose-source-v1': 'node',
-  'node-npm-sunkidz-web-v1': 'node'
+  'node-npm-sunkidz-web-v1': 'node',
+  'node-pnpm-hms-platform-source-v1': 'node'
 };
 
 const lockfileByProfile: Partial<Record<ApprovedProfileId, string>> = {
@@ -97,10 +99,11 @@ export function validateBuildProfile(expectedId: string, raw: unknown): BuildPro
       throw new Error(`Malformed build profile ${expectedId}: ${key} must be a non-empty string`);
     }
   }
+  if (expectedId === 'node-pnpm-hms-platform-source-v1' && profile.execution !== 'hms-hybrid') throw new Error(`Malformed build profile ${expectedId}: execution must be hms-hybrid`);
   if (expectedId === 'node-npm-loomrun-compose-source-v1' && profile.execution !== 'loomrun-hybrid') {
     throw new Error(`Malformed build profile ${expectedId}: execution must be loomrun-hybrid`);
   }
-  if (expectedId !== 'node-npm-loomrun-compose-source-v1' && 'execution' in profile) {
+  if (!['node-npm-loomrun-compose-source-v1', 'node-pnpm-hms-platform-source-v1'].includes(expectedId) && 'execution' in profile) {
     throw new Error(`Malformed build profile ${expectedId}: execution is not supported`);
   }
   return profile as BuildProfile;

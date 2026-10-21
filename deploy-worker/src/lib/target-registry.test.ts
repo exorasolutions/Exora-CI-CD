@@ -17,6 +17,7 @@ test("loads every target config with explicit enablement", () => {
     "cab-production",
     "exora-crm-production",
     "exora-shared-services-production",
+    "exora-health-platform-production",
     "exora-production",
     "loomrun-production",
     "nomi-production",
@@ -32,7 +33,11 @@ test("loads every target config with explicit enablement", () => {
     assert.equal(target.releaseRoot.startsWith(target.rootPath), true);
     const handoffEnabled = ["cab-production", "exora-static", "loomrun-production", "nomi-production", "sunkidz-production", "exora-crm-production", "qlix-production", "exora-shared-services-production"];
     assert.equal(target.enabled, handoffEnabled.includes(target.id), `${target.id} has unexpected handoff enablement`);
-    if (!["exora-production", "example-static-production"].includes(target.id)) assert.match(target.rootPath, /^\/srv\/apps\//);
+    if (target.id === "exora-health-platform-production") {
+      assert.equal(target.rootPath, "/etc/exora-health/compose");
+    } else if (!["exora-production", "example-static-production"].includes(target.id)) {
+      assert.match(target.rootPath, /^\/srv\/apps\//);
+    }
   }
 });
 

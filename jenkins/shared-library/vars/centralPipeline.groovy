@@ -584,6 +584,7 @@ private void enforceLockfilePolicy(Map profile) {
 }
 
 private void runInstall(Map profile) {
+  if (profile.execution == 'hms-hybrid') { runHmsHybridCommand(profile, 'install'); return }
   if (profile.execution == 'loomrun-hybrid') {
     runLoomrunHybridCommand(profile, 'install')
     return
@@ -601,6 +602,7 @@ private void validateBuildAgent(Map profile) {
 }
 
 private void runTests(Map profile) {
+  if (profile.execution == 'hms-hybrid') { runHmsHybridCommand(profile, 'test'); return }
   if (profile.execution == 'loomrun-hybrid') {
     runLoomrunHybridCommand(profile, 'test')
     return
@@ -613,6 +615,7 @@ private void runTests(Map profile) {
 }
 
 private void runBuild(Map profile) {
+  if (profile.execution == 'hms-hybrid') { runHmsHybridCommand(profile, 'build'); return }
   if (profile.execution == 'loomrun-hybrid') {
     runLoomrunHybridCommand(profile, 'build')
     return
@@ -622,6 +625,21 @@ private void runBuild(Map profile) {
     return
   }
   sh profile.build
+}
+
+private void runHmsHybridCommand(Map profile, String key) {
+  if (profile.id != 'node-pnpm-hms-platform-source-v1') error('Unsupported HMS execution mode')
+  def commands = [
+    install: 'set -eu; test -f pnpm-lock.yaml; test -f Dockerfile.platform; corepack enable; pnpm install --frozen-lockfile',
+    test: 'set -eu; test ! -e .env; pnpm test',
+    build: '''set -eu
+      test ! -e .env
+      pnpm platform:build
+      rm -rf .central-cicd/release
+      mkdir -p .central-cicd/release
+      tar --exclude=.git --exclude=.central-cicd --exclude=node_modules --exclude='*/node_modules' --exclude=.env --exclude='.env.*' --exclude='*/.env' --exclude='*/.env.*' --exclude=tenants --exclude='tenants/**' --exclude=data --exclude='data/**' -cf - Dockerfile.platform package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json vitest.config.ts apps packages db | tar -C .central-cicd/release -xf -'''
+  ]
+  sh commands[key]
 }
 
 private void runLoomrunHybridCommand(Map profile, String key) {

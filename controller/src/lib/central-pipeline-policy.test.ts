@@ -63,7 +63,8 @@ test('loads every project config and maps each repository only once', () => {
     'loomrun',
     'nomi',
     'qlix',
-    'sunkidz'
+    'sunkidz',
+    'exora-health'
   ]);
 
   for (const file of readdirSync(projectDir).filter((name) => /\.ya?ml$/i.test(name))) {

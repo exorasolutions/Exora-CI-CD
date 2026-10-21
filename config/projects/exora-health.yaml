@@ -1,0 +1,21 @@
+schemaVersion: 1
+project:
+  id: exora-health
+  enabled: true
+  github:
+    owner: yeshwanth1127
+    repo: exora-health
+    branch: main
+  build:
+    profile: node-pnpm-hms-platform-source-v1
+    agentLabel: linux-build
+    testsRequired: true
+    timeoutMinutes: 60
+  deployment:
+    mode: manual
+    adapter: compose
+    targetId: exora-health-platform-production
+    environment: production
+  healthCheck:
+    type: http
+    url: http://127.0.0.1:8111/ready

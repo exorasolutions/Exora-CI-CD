@@ -2,7 +2,7 @@ import Fastify from "fastify";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import { Pool, PoolClient } from "pg";
-import { executeComposeDeployment } from "./adapters/compose.js";
+import { executeComposeDeployment, executeComposeDryRun } from "./adapters/compose.js";
 import { executeExoraProductionDeployment } from "./adapters/exora-production.js";
 import { executeExoraStaticDeployment } from "./adapters/exora-static.js";
 import { assertInside } from "./lib/artifact.js";
@@ -142,7 +142,18 @@ app.post("/deploy", async (req, reply) => {
       return reply.code(409).send({ error: "deployment already in progress" });
     }
 
-    if (!(executionEnabled && executionProjectAllowlist.has(b.projectId)) || b.dryRun === true) {
+    if (b.dryRun === true) {
+      if (t.adapter !== "compose") return reply.code(400).send({ error: "validated dry-run supports compose targets only" });
+      const configured = loadTargets().get(t.id);
+      if (!configured || configured.adapter !== "compose" || configured.rootPath !== t.targetPath) throw new Error(`missing or mismatched compose target configuration: ${t.id}`);
+      if (id === null) throw new Error("deployment audit record was not created");
+      const validation = await executeComposeDryRun({ target: { id:t.id, projectId:t.projectId, environment:t.environment, adapter:t.adapter, targetPath:t.targetPath, healthUrl:t.healthUrl, healthExpectedStatus:t.healthExpectedStatus, runtime:configured.runtime }, request:{ ...b, artifact:{ ...b.artifact, path:artifactPath } }, deploymentId:id, workRoot:deployWorkRoot });
+      await client.query("UPDATE deployments SET state='DRY_RUN', finished_at=now(), health_result=$2 WHERE id=$1", [id, JSON.stringify(validation)]);
+      await unlock(client,b.projectId,b.environment); locked=false; await client.query("COMMIT");
+      return { ok:true, state:"DRY_RUN", deploymentId:id, targetId:t.id, validation };
+    }
+
+    if (!(executionEnabled && executionProjectAllowlist.has(b.projectId))) {
       await client.query(
         "UPDATE deployments SET state='DRY_RUN', finished_at=now() WHERE id=$1",[id]);
       await unlock(client,b.projectId,b.environment);

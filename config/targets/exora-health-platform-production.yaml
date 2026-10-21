@@ -1,0 +1,29 @@
+id: exora-health-platform-production
+projectId: exora-health
+environment: production
+adapter: compose
+rootPath: /etc/exora-health/compose
+releaseRoot: /etc/exora-health/compose/.central-cicd/releases
+currentPath: /etc/exora-health/compose
+health:
+  type: http
+  url: http://127.0.0.1:8111/ready
+  expectedStatus: 200
+  timeoutMs: 10000
+runtime:
+  composeProject: exora-health-platform
+  composeWorkingDir: /etc/exora-health/compose
+  composeFiles: /etc/exora-health/compose/platform.compose.yml
+  composeServices: platform
+  builtServices: platform
+  healthServices: platform
+  containers: exora-health-platform-platform-1
+  publicBindings: 127.0.0.1:8111->3040
+  persistentMounts: ""
+  preservePolicy: preserve-hms-identity-and-platform-runtime-environment
+  candidateContextPolicy: hms-platform-pnpm-source-v1
+  healthContract: hms-platform-ready-v1
+  identityIsolationPolicy: platform-only-keycloak-postgres-immutable-v1
+  deploymentStatus: dry-run-only-compose-helper-validation
+  composeHealthPolicy: docker-healthcheck-required
+enabled: false

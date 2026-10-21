@@ -103,6 +103,13 @@ const APPROVED_COMPOSE_TARGETS: Record<string, {
     composeWorkingDir: "/srv/apps/shared",
     composeFiles: ["/srv/apps/shared/compose.yaml", "/srv/apps/shared/compose.prod.yaml"]
   },
+  "exora-health-platform-production": {
+    projectId: "exora-health",
+    root: "/etc/exora-health/compose",
+    composeProject: "exora-health-platform",
+    composeWorkingDir: "/etc/exora-health/compose",
+    composeFiles: ["/etc/exora-health/compose/platform.compose.yml"]
+  },
   "loomrun-production": {
     projectId: "loomrun",
     root: "/srv/apps/loomrun",
@@ -133,7 +140,7 @@ const APPROVED_COMPOSE_TARGETS: Record<string, {
   }
 };
 
-export function validateComposeTarget(target: ComposeTarget, request: ComposeDeployRequest): ComposePolicy {
+export function validateComposeTarget(target: ComposeTarget, request: ComposeDeployRequest, dryRun = false): ComposePolicy {
   const approved = APPROVED_COMPOSE_TARGETS[target.id];
   if (!approved) throw new Error(`compose target is not approved: ${target.id}`);
   if (target.adapter !== "compose") throw new Error(`unsupported compose adapter: ${target.adapter}`);
@@ -174,7 +181,7 @@ export function validateComposeTarget(target: ComposeTarget, request: ComposeDep
   assertSubset(builtServices, composeServices, "built service");
   assertSubset(healthServices, composeServices, "health service");
   for (const service of composeServices) assertServiceName(service);
-  if (deploymentStatus !== "compose-helper-installed-and-staging-validated") {
+  if (deploymentStatus !== "compose-helper-installed-and-staging-validated" && !(dryRun && target.id === "exora-health-platform-production" && deploymentStatus === "dry-run-only-compose-helper-validation")) {
     throw new Error(`compose live deployment is blocked for ${target.id}: ${deploymentStatus}`);
   }
   if (composeHealthPolicy !== "docker-healthcheck-required") {
@@ -199,6 +206,12 @@ export function validateComposeTarget(target: ComposeTarget, request: ComposeDep
       throw new Error("Nomi target lacks its approved health contract");
     }
   }
+  if (target.id === "exora-health-platform-production") {
+    if (runtime.candidateContextPolicy !== "hms-platform-pnpm-source-v1") throw new Error("HMS target lacks its approved candidate context policy");
+    if (runtime.healthContract !== "hms-platform-ready-v1") throw new Error("HMS target lacks its approved health contract");
+    if (runtime.identityIsolationPolicy !== "platform-only-keycloak-postgres-immutable-v1") throw new Error("HMS target lacks its identity isolation policy");
+  }
+
   if (target.id === "exora-shared-services-production" && runtime.sharedDeploymentPolicy !== "explicit-shared-services-policy") {
     throw new Error("shared services deployment requires an explicit shared-services policy");
   }
@@ -258,6 +271,19 @@ export async function executeComposeDeployment(ctx: ComposeContext): Promise<{ r
       await run("sudo", ["-n", HELPER, "rollback", policyPath]);
     }
   };
+}
+
+export async function executeComposeDryRun(ctx: ComposeContext): Promise<{ validated: true; command: string }> {
+  const deploymentId = String(ctx.deploymentId);
+  if (!/^[1-9][0-9]{0,17}$/.test(deploymentId)) throw new Error("invalid deployment ID for compose helper");
+  await validateArchiveBeforeHelper(ctx.request.artifact.path);
+  const policy = validateComposeTarget(ctx.target, ctx.request, true);
+  policy.deploymentId = deploymentId;
+  policy.releaseId = "dry-run-" + ctx.request.commitSha.slice(0, 12).toLowerCase() + "-" + deploymentId;
+  (policy as ComposePolicy & { dryRun: boolean }).dryRun = true;
+  const policyPath = await writePolicy(ctx.workRoot, policy);
+  await (ctx.run ?? execFileAsync)("sudo", ["-n", HELPER, "validate", policyPath]);
+  return { validated: true, command: "central-compose-deploy validate" };
 }
 
 async function writePolicy(workRoot: string, policy: ComposePolicy): Promise<string> {
