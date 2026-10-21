@@ -373,7 +373,8 @@ private Map loadBuildProfile(Map cfg) {
     'node-npm-nomi-source-v1',
     'node-npm-qlix-compose-source-v1',
     'node-npm-sunkidz-compose-source-v1',
-    'node-npm-sunkidz-web-v1'
+    'node-npm-sunkidz-web-v1',
+    'node-pnpm-hms-platform-source-v1'
   ]
   if (!allowed.contains(id)) {
     error("Unknown centrally-approved build profile: ${id}")
@@ -433,6 +434,9 @@ private Map validateBuildProfile(String expectedId, Object rawProfile) {
       error("Malformed build profile ${expectedId}: ${key} must be a non-empty string")
     }
   }
+  if (expectedId == 'node-pnpm-hms-platform-source-v1' && profile.execution != 'hms-hybrid') {
+    error('Malformed HMS profile: execution must be hms-hybrid')
+  }
   if (expectedId == 'node-npm-loomrun-compose-source-v1') {
     if (profile.execution != 'loomrun-hybrid') {
       error('Malformed Loomrun profile: execution must be loomrun-hybrid')
@@ -461,7 +465,8 @@ private void validateRuntimeProfileCombination(String profileId, String runtime)
     'node-npm-nomi-source-v1': 'node',
     'node-npm-qlix-compose-source-v1': 'node',
     'node-npm-sunkidz-compose-source-v1': 'node',
-    'node-npm-sunkidz-web-v1': 'node'
+    'node-npm-sunkidz-web-v1': 'node',
+    'node-pnpm-hms-platform-source-v1': 'node'
   ]
   if (!expectedRuntimeByProfile.containsKey(profileId)) {
     error("Unsupported build profile: ${profileId}")
