@@ -259,7 +259,15 @@ def docker(args, capture=False):
 
 
 def compose_args(policy, extra_files=None):
-    args = ["docker", "compose", "-p", policy["composeProject"]]
+    args = ["docker", "compose"]
+    if policy.get("targetId") == "exora-health-platform-production":
+        env_file = Path(policy.get("protectedEnvironmentFile", "/etc/exora-health/compose/platform.env"))
+        if not env_file.is_absolute() or env_file.is_symlink() or not env_file.is_file():
+            fail("HMS protected platform environment is missing or unsafe")
+        if env_file.stat().st_mode & 0o077:
+            fail("HMS protected platform environment must not be group/world accessible")
+        args.extend(["--env-file", str(env_file)])
+    args.extend(["-p", policy["composeProject"]])
     for file_name in [*policy["composeFiles"], *(extra_files or [])]:
         args.extend(["-f", file_name])
     return args
@@ -1028,12 +1036,12 @@ def prepare_hms_build_contexts(policy, release):
             policy.get("candidateContextPolicy") != "hms-platform-pnpm-source-v1"):
         fail("candidate artifact mapping is not approved for this compose target")
     release = _unwrap_release(release)
-    for relative in ["package.json", "pnpm-lock.yaml", "db/scripts/dbmate.mjs", "Dockerfile"]:
+    for relative in ["package.json", "pnpm-lock.yaml", "db/scripts/dbmate.mjs", "Dockerfile.platform"]:
         _required_release_path(release, relative)
     for item in release.rglob("*"):
         if item.is_symlink():
             fail(f"candidate build context contains a symlink: {item.relative_to(release)}")
-    return {"platform": {"context": str(release), "dockerfile": "Dockerfile"}}
+    return {"platform": {"context": str(release), "dockerfile": "Dockerfile.platform"}}
 
 def compose_deployment_order(policy):
     """Apply service updates in the verified application startup order."""
@@ -1086,7 +1094,7 @@ def run_hms_dbmate_migration(policy, image, state):
     identity = state.get("candidateIdentity", "")
     if not re.fullmatch(r"sha256:[a-f0-9]{64}", identity):
         fail("HMS candidate image digest was not verified")
-    env_file = Path(policy.get("protectedEnvironmentFile", "/etc/exora-health/compose/.env"))
+    env_file = Path(policy.get("protectedEnvironmentFile", "/etc/exora-health/compose/platform.env"))
     if env_file.is_symlink() or not env_file.is_file():
         fail("HMS protected platform environment is missing or unsafe")
     mapped_fd, mapped_name = tempfile.mkstemp(prefix=".hms-dbmate-env-", dir=str(env_file.parent))

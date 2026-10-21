@@ -22,6 +22,23 @@ def loomrun_policy():
     }
 
 
+def hms_policy():
+    return {
+        "targetId": "exora-health-platform-production",
+        "projectId": "exora-health",
+        "candidateContextPolicy": "hms-platform-pnpm-source-v1",
+        "composeProject": "exora-health-platform",
+        "composeFiles": ["platform.compose.yml"],
+    }
+
+
+def make_hms_release(root: Path):
+    for relative in ["package.json", "pnpm-lock.yaml", "db/scripts/dbmate.mjs", "Dockerfile.platform"]:
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("fixture\n", encoding="utf-8")
+
+
 def make_release(root: Path):
     required_files = [
         "compose.yaml",
@@ -332,6 +349,28 @@ class LoomrunContextTests(unittest.TestCase):
         }
         with self.assertRaisesRegex(RuntimeError, "not approved for live helper execution"):
             module["validate_approved_contract"](disabled)
+
+
+class HmsContextTests(unittest.TestCase):
+    def test_prepares_platform_context_with_platform_dockerfile(self):
+        module = helper_module()
+        with tempfile.TemporaryDirectory() as directory:
+            release = Path(directory)
+            make_hms_release(release)
+            contexts = module["prepare_build_contexts"](hms_policy(), release)
+            self.assertEqual(contexts["platform"]["context"], str(release.resolve()))
+            self.assertEqual(contexts["platform"]["dockerfile"], "Dockerfile.platform")
+
+    def test_compose_args_loads_private_hms_environment_file(self):
+        module = helper_module()
+        with tempfile.TemporaryDirectory() as directory:
+            env_file = Path(directory) / "platform.env"
+            env_file.write_text("CONTROL_DATABASE_URL=redacted\n", encoding="utf-8")
+            env_file.chmod(0o600)
+            policy = hms_policy()
+            policy["protectedEnvironmentFile"] = str(env_file)
+            args = module["compose_args"](policy)
+            self.assertEqual(args[:5], ["docker", "compose", "--env-file", str(env_file), "-p"])
 
 
 if __name__ == "__main__":
