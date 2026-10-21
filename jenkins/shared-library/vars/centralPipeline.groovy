@@ -649,7 +649,7 @@ private void runHmsHybridCommand(Map profile, String key) {
     build: '''set -eu
       cd HMS_NEW
       test ! -e .env
-      corepack pnpm platform:build
+      corepack pnpm --filter @hms/platform-web build
       rm -rf ../.central-cicd/release
       mkdir -p ../.central-cicd/release
       tar --exclude=.git --exclude=.central-cicd --exclude=node_modules --exclude='*/node_modules' --exclude=.env --exclude='.env.*' --exclude='*/.env' --exclude='*/.env.*' --exclude=tenants --exclude='tenants/**' --exclude=data --exclude='data/**' -cf - Dockerfile.platform package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json vitest.config.ts apps packages db | tar -C ../.central-cicd/release -xf -'''

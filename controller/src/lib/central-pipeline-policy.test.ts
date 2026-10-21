@@ -119,6 +119,7 @@ test('HMS profile is centrally approved and the shared library routes it through
   assert.match(pipeline, /runHmsHybridCommand/);
   assert.match(pipeline, /PG_DATA_DIR/);
   assert.match(pipeline, /pnpm pg:start/);
+  assert.match(pipeline, /corepack pnpm --filter @hms\/platform-web build/);
   assert.match(pipeline, /tenants/);
 });
 
