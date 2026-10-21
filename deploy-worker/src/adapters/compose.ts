@@ -210,6 +210,7 @@ export function validateComposeTarget(target: ComposeTarget, request: ComposeDep
     if (runtime.candidateContextPolicy !== "hms-platform-pnpm-source-v1") throw new Error("HMS target lacks its approved candidate context policy");
     if (runtime.healthContract !== "hms-platform-ready-v1") throw new Error("HMS target lacks its approved health contract");
     if (runtime.identityIsolationPolicy !== "platform-only-keycloak-postgres-immutable-v1") throw new Error("HMS target lacks its identity isolation policy");
+    if (runtime.migrationPolicy !== "hms-dbmate-forward-only-control-plane-v1") throw new Error("HMS target lacks its approved dbmate migration policy");
   }
 
   if (target.id === "exora-shared-services-production" && runtime.sharedDeploymentPolicy !== "explicit-shared-services-policy") {
