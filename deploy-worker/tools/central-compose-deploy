@@ -1016,8 +1016,24 @@ def prepare_build_contexts(policy, release):
         return prepare_qlix_build_contexts(policy, release)
     if target_id == "exora-shared-services-production":
         return prepare_shared_services_build_contexts(policy, release)
+    if target_id == "exora-health-platform-production":
+        return prepare_hms_build_contexts(policy, release)
     fail("candidate artifact mapping is not approved for this compose target")
 
+
+
+def prepare_hms_build_contexts(policy, release):
+    if (policy.get("targetId") != "exora-health-platform-production" or
+            policy.get("projectId") != "exora-health" or
+            policy.get("candidateContextPolicy") != "hms-platform-pnpm-source-v1"):
+        fail("candidate artifact mapping is not approved for this compose target")
+    release = _unwrap_release(release)
+    for relative in ["package.json", "pnpm-lock.yaml", "db/scripts/dbmate.mjs", "Dockerfile"]:
+        _required_release_path(release, relative)
+    for item in release.rglob("*"):
+        if item.is_symlink():
+            fail(f"candidate build context contains a symlink: {item.relative_to(release)}")
+    return {"platform": {"context": str(release), "dockerfile": "Dockerfile"}}
 
 def compose_deployment_order(policy):
     """Apply service updates in the verified application startup order."""
@@ -1060,6 +1076,50 @@ def release_images(policy):
         for service in policy["builtServices"]
     }
 
+
+
+def run_hms_dbmate_migration(policy, image, state):
+    if policy.get("migrationPolicy") != "hms-dbmate-forward-only-control-plane-v1":
+        fail("HMS candidate lacks the approved dbmate migration policy")
+    if not isinstance(image, str) or not re.fullmatch(r"exora-health-platform-platform:cicd-[a-f0-9]{12}-[1-9][0-9]*", image):
+        fail("HMS candidate image identity is invalid")
+    identity = state.get("candidateIdentity", "")
+    if not re.fullmatch(r"sha256:[a-f0-9]{64}", identity):
+        fail("HMS candidate image digest was not verified")
+    env_file = Path(policy.get("protectedEnvironmentFile", "/etc/exora-health/compose/.env"))
+    if env_file.is_symlink() or not env_file.is_file():
+        fail("HMS protected platform environment is missing or unsafe")
+    mapped_fd, mapped_name = tempfile.mkstemp(prefix=".hms-dbmate-env-", dir=str(env_file.parent))
+    try:
+        with os.fdopen(mapped_fd, "w") as mapped:
+            mapped.write("DATABASE_URL=")
+            control = None
+            for line in env_file.read_text().splitlines():
+                if line.startswith("CONTROL_DATABASE_URL="):
+                    control = line.split("=", 1)[1]
+                    break
+            if not control:
+                fail("HMS protected environment lacks CONTROL_DATABASE_URL")
+            mapped.write(control + "\n")
+            mapped.flush()
+            os.fchmod(mapped.fileno(), 0o600)
+        state["migration"] = {"policy": policy["migrationPolicy"], "candidateImage": image, "candidateIdentity": identity, "startedAt": time.time(), "status": "starting"}
+        write_state(policy, state)
+        try:
+            run(["docker", "run", "--rm", "--env-file", mapped_name, image, "node", "db/scripts/dbmate.mjs", "up"], timeout=1800)
+        except Exception as error:
+            state["migration"].update({"status": "failed", "finishedAt": time.time(), "error": str(error)[:300]})
+            write_state(policy, state)
+            raise
+        state["migration"].update({"status": "succeeded", "finishedAt": time.time()})
+        write_state(policy, state)
+    finally:
+        try:
+            os.unlink(mapped_name)
+        except FileNotFoundError:
+            pass
+    state["migration"].update({"status": "succeeded", "finishedAt": time.time()})
+    write_state(policy, state)
 
 def wait_services(policy, attempts=60):
     for service in policy["healthServices"]:
@@ -1128,7 +1188,14 @@ def deploy(policy_path):
             for service in compose_deployment_order(policy):
                 run([*compose_args(policy, [override]), "build", service], cwd=policy["composeWorkingDir"], timeout=1800)
 
-            if policy.get("targetId") == "loomrun-production":
+            if policy.get("targetId") == "exora-health-platform-production":
+                identity = run(["docker", "image", "inspect", "--format", "{{.Id}}", new_images["platform"]], capture=True, timeout=60)
+                if not re.fullmatch(r"sha256:[a-f0-9]{64}", identity):
+                    fail("HMS candidate image digest verification failed")
+                state["candidateIdentity"] = identity
+                write_state(policy, state)
+                run_hms_dbmate_migration(policy, new_images["platform"], state)
+            elif policy.get("targetId") == "loomrun-production":
                 # A migration failure occurs before activation, so live images remain untouched.
                 state["migration"] = {"policy": policy.get("migrationPolicy", "none"), "status": "starting"}
                 write_state(policy, state)
