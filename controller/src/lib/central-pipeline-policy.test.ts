@@ -433,9 +433,9 @@ test('deployment execution defaults disabled and is administrator-env controlled
 test('manual and automatic modes skip deployment while execution is disabled', () => {
   const pipeline = readFileSync(pipelinePath, 'utf8');
   assert.match(pipeline, /stage\('Deployment disabled'\)/);
-  assert.match(pipeline, /when \{ expression \{ !deploymentEnabled \} \}/);
+  assert.match(pipeline, /when \{ expression \{ !deploymentEnabled && !policyDryRun \} \}/);
   assert.match(pipeline, /deploymentEnabled &&\s*cfg\.deploymentMode == 'manual' &&\s*optionalAdminEnv\('CENTRAL_CICD_DEPLOY_DRY_RUN'\) != 'true'/);
-  assert.match(pipeline, /stage\('Deployment handoff'\)[\s\S]*when \{\s*beforeAgent true\s*expression \{ deploymentEnabled \}\s*\}/);
+  assert.match(pipeline, /stage\('Deployment handoff'\)[\s\S]*when \{\s*beforeAgent true\s*expression \{ deploymentEnabled \|\| policyDryRun \}\s*\}/);
 });
 
 test('trusted project registry supplies and pins the deployment handoff contract', () => {
@@ -460,7 +460,7 @@ test('disabled trusted targets cannot reach approval or deployment handoff', () 
   const approval = pipeline.slice(pipeline.indexOf("stage('Manual approval')"), pipeline.indexOf("stage('Deployment handoff')"));
   assert.match(approval, /deploymentEnabled &&/);
   const handoff = pipeline.slice(pipeline.indexOf("stage('Deployment handoff')"), pipeline.indexOf('    post {'));
-  assert.match(handoff, /expression \{ deploymentEnabled \}/);
+  assert.match(handoff, /expression \{ deploymentEnabled \|\| policyDryRun \}/);
 });
 
 test('deployment handoff uses configured label and defaults to linux-build', () => {
@@ -538,7 +538,16 @@ test('shared library pins Exora deployment parameters centrally', () => {
   assert.match(pipeline, /exora-production/);
   assert.match(pipeline, /node-npm-static-site-v1/);
   assert.match(pipeline, /exora-static/);
-  assert.doesNotMatch(pipeline, /exora-crm.*targetId/s);
+  assert.doesNotMatch(pipeline, /cfg\.projectId == 'exora-crm'[\s\S]*cfg\.targetId/);
+});
+
+test('HMS policy dry-run is explicit and always non-mutating', () => {
+  const pipeline = readFileSync(pipelinePath, 'utf8');
+  assert.match(pipeline, /CENTRAL_CICD_POLICY_DRY_RUN/);
+  assert.match(pipeline, /policyDryRunRequested\(cfg, trustedSource\)/);
+  assert.match(pipeline, /policyDryRun \|\| optionalAdminEnv\('CENTRAL_CICD_DEPLOY_DRY_RUN'\) == 'true'/);
+  assert.match(pipeline, /CENTRAL_CICD_POLICY_DRY_RUN is restricted to the disabled HMS production target/);
+  assert.match(pipeline, /CENTRAL_CICD_POLICY_DRY_RUN requires CENTRAL_CICD_DEPLOY_DRY_RUN=true/);
 });
 
 test('failed tests or builds cannot proceed to deployment in declarative stage order', () => {

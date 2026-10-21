@@ -7,6 +7,7 @@ def call(Map cfg = [:]) {
   def deployLabel = cfg.deployAgentLabel ?: 'linux-build'
   def deploymentRequested = deploymentExecutionEnabled(cfg.projectId as String)
   def deploymentEnabled = false
+  def policyDryRun = false
 
   pipeline {
     agent none
@@ -29,6 +30,7 @@ def call(Map cfg = [:]) {
                 cfg.repository = trustedSource.repository
                 enforceProjectDeploymentPolicy(cfg)
                 deploymentEnabled = deploymentRequested && trustedSource.targetEnabled == true
+                policyDryRun = policyDryRunRequested(cfg, trustedSource)
                 if (deploymentRequested && !deploymentEnabled) {
                   echo "Deployment execution skipped: trusted target ${cfg.targetId} is disabled in the central target registry."
                 }
@@ -94,10 +96,20 @@ def call(Map cfg = [:]) {
       }
 
       stage('Deployment disabled') {
-        when { expression { !deploymentEnabled } }
+        when { expression { !deploymentEnabled && !policyDryRun } }
         steps {
           echo 'Deployment execution skipped: central deployment execution or trusted target enablement is disabled.'
           echo 'No deployment agent, deploy worker, or deployment adapter will be contacted.'
+        }
+      }
+
+      stage('HMS policy dry-run') {
+        when {
+          beforeAgent true
+          expression { policyDryRun }
+        }
+        steps {
+          echo 'HMS policy dry-run enabled: contacting deploy worker for validation only; live execution remains disabled.'
         }
       }
 
@@ -121,7 +133,7 @@ def call(Map cfg = [:]) {
       stage('Deployment handoff') {
         when {
           beforeAgent true
-          expression { deploymentEnabled }
+          expression { deploymentEnabled || policyDryRun }
         }
         steps {
           script {
@@ -146,7 +158,7 @@ def call(Map cfg = [:]) {
                 echo "HANDOFF_WRITE_TEST=PASS"
               '''
               sh "mkdir -p ${shellQuote(stagingDir)} && cp ${shellQuote(artifactName)} ${shellQuote("${artifactName}.sha256")} ${shellQuote(stagingDir)}/"
-              def dryRun = optionalAdminEnv('CENTRAL_CICD_DEPLOY_DRY_RUN') == 'true'
+              def dryRun = policyDryRun || optionalAdminEnv('CENTRAL_CICD_DEPLOY_DRY_RUN') == 'true'
               centralDeploy(
                 projectId: cfg.projectId,
                 environment: cfg.environment ?: 'production',
@@ -851,6 +863,21 @@ private void validateArtifactName(String artifactName) {
   requireMatch('artifactName', artifactName, /^[A-Za-z0-9][A-Za-z0-9_.-]{0,120}\.tar\.gz$/)
 }
 
+private boolean policyDryRunRequested(Map cfg, Map trustedSource) {
+  def requested = (optionalAdminEnv('CENTRAL_CICD_POLICY_DRY_RUN') ?: '').trim()
+  if (requested != 'true') return false
+  if (cfg.targetId != 'exora-health-platform-production' ||
+      cfg.projectId != 'exora-health' ||
+      cfg.environment != 'production' ||
+      trustedSource.targetEnabled == true) {
+    error('CENTRAL_CICD_POLICY_DRY_RUN is restricted to the disabled HMS production target.')
+  }
+  if (optionalAdminEnv('CENTRAL_CICD_DEPLOY_DRY_RUN') != 'true') {
+    error('CENTRAL_CICD_POLICY_DRY_RUN requires CENTRAL_CICD_DEPLOY_DRY_RUN=true.')
+  }
+  return true
+}
+
 private boolean deploymentExecutionEnabled(String projectId) {
   def enabled = (env.CENTRAL_CICD_DEPLOYMENT_EXECUTION_ENABLED ?: 'false').trim()
   if (!['true', 'false'].contains(enabled)) {
@@ -965,6 +992,9 @@ private String adminEnvValue(String name) {
   }
   if (name == 'CENTRAL_CICD_DEPLOY_DRY_RUN') {
     return env.CENTRAL_CICD_DEPLOY_DRY_RUN
+  }
+  if (name == 'CENTRAL_CICD_POLICY_DRY_RUN') {
+    return env.CENTRAL_CICD_POLICY_DRY_RUN
   }
   error("Unsupported administrator environment variable: ${name}")
 }
