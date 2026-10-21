@@ -636,21 +636,23 @@ private void runBuild(Map profile) {
 private void runHmsHybridCommand(Map profile, String key) {
   if (profile.id != 'node-pnpm-hms-platform-source-v1') error('Unsupported HMS execution mode')
   def commands = [
-    install: 'set -eu; test -f pnpm-lock.yaml; test -f Dockerfile.platform; corepack enable; pnpm install --frozen-lockfile',
+    install: 'set -eu; cd HMS_NEW; test -f pnpm-lock.yaml; test -f Dockerfile.platform; corepack pnpm install --frozen-lockfile',
     test: '''set -eu
+      cd HMS_NEW
       test ! -e .env
       export PG_PORT=54329
-      export PG_DATA_DIR="$PWD/.central-cicd/hms-test-postgres"
-      trap 'pnpm pg:stop || true' EXIT
-      pnpm pg:start
-      pnpm test
+      export PG_DATA_DIR="$(mktemp -d /tmp/hms-ci-pg.XXXXXX)"
+      trap 'corepack pnpm pg:stop || true' EXIT
+      corepack pnpm pg:start
+      corepack pnpm test
     ''',
     build: '''set -eu
+      cd HMS_NEW
       test ! -e .env
-      pnpm platform:build
-      rm -rf .central-cicd/release
-      mkdir -p .central-cicd/release
-      tar --exclude=.git --exclude=.central-cicd --exclude=node_modules --exclude='*/node_modules' --exclude=.env --exclude='.env.*' --exclude='*/.env' --exclude='*/.env.*' --exclude=tenants --exclude='tenants/**' --exclude=data --exclude='data/**' -cf - Dockerfile.platform package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json vitest.config.ts apps packages db | tar -C .central-cicd/release -xf -'''
+      corepack pnpm platform:build
+      rm -rf ../.central-cicd/release
+      mkdir -p ../.central-cicd/release
+      tar --exclude=.git --exclude=.central-cicd --exclude=node_modules --exclude='*/node_modules' --exclude=.env --exclude='.env.*' --exclude='*/.env' --exclude='*/.env.*' --exclude=tenants --exclude='tenants/**' --exclude=data --exclude='data/**' -cf - Dockerfile.platform package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json vitest.config.ts apps packages db | tar -C ../.central-cicd/release -xf -'''
   ]
   sh commands[key]
 }
