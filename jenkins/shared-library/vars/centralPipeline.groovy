@@ -578,7 +578,7 @@ private void enforceLockfilePolicy(Map profile) {
   def lockfileByProfile = [
     'node-npm-v1': 'package-lock.json',
     'node-pnpm-v1': 'pnpm-lock.yaml',
-    'node-pnpm-hms-platform-source-v1': 'pnpm-lock.yaml'
+    'node-pnpm-hms-platform-source-v1': 'HMS_NEW/pnpm-lock.yaml'
   ]
   def lockfile = lockfileByProfile.get(profile.id as String)
   if (!lockfile) {

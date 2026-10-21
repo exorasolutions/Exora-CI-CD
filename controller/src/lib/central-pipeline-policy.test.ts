@@ -115,7 +115,7 @@ test('HMS profile is centrally approved and the shared library routes it through
   const pipeline = readFileSync(pipelinePath, 'utf8');
   assert.match(pipeline, /'node-pnpm-hms-platform-source-v1'/);
   assert.match(pipeline, /'node-pnpm-hms-platform-source-v1': 'node'/);
-  assert.match(pipeline, /'node-pnpm-hms-platform-source-v1': 'pnpm-lock.yaml'/);
+  assert.match(pipeline, /'node-pnpm-hms-platform-source-v1': 'HMS_NEW\/pnpm-lock.yaml'/);
   assert.match(pipeline, /runHmsHybridCommand/);
   assert.match(pipeline, /PG_DATA_DIR/);
   assert.match(pipeline, /pnpm pg:start/);
